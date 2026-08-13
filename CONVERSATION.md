@@ -98,3 +98,15 @@ tests/test_solidbd.py -> tests/test_solid123d.py; updated pyproject.toml,
 README, tests, sources, and CONVERSATION.md; re-locked and synced with uv;
 also updated the imports in sollie_token_aug_2026/sollie_token.py. Grep
 confirms zero remaining occurrences; 44 tests pass.
+
+**User**: Commit, create public repo etjones/solid123d, push, add CI to
+run tests, then local build (manual PyPI publish to follow).
+
+**Assistant**: Publish prep: removed stale `[project.scripts]` from
+pyproject; declared explicit fonttools dependency; added MIT LICENSE,
+metadata/classifiers/URLs; relaxed requires-python to >=3.10 (verified
+44 tests pass on 3.10 and 3.13 locally). Added .gitignore and GitHub
+Actions CI (uv, ubuntu+macos x 3.10/3.13). Initial commit on main,
+created github.com/etjones/solid123d, pushed; CI succeeded on all four
+matrix legs. `uv build` produced sdist+wheel in dist/; wheel verified in
+an isolated env. Ready for `uv publish` by user.
