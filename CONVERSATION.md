@@ -110,3 +110,8 @@ Actions CI (uv, ubuntu+macos x 3.10/3.13). Initial commit on main,
 created github.com/etjones/solid123d, pushed; CI succeeded on all four
 matrix legs. `uv build` produced sdist+wheel in dist/; wheel verified in
 an isolated env. Ready for `uv publish` by user.
+
+**User**: Add a GitHub CI badge to the README.
+
+**Assistant**: Added the actions/workflows/ci.yml badge under the README
+title, linked to the workflow page; committed and pushed.

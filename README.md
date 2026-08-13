@@ -1,5 +1,7 @@
 # solid123d
 
+[![CI](https://github.com/etjones/solid123d/actions/workflows/ci.yml/badge.svg)](https://github.com/etjones/solid123d/actions/workflows/ci.yml)
+
 A bridge that runs [SolidPython](https://github.com/SolidCode/SolidPython)
 (OpenSCAD-style) code on the [build123d](https://build123d.readthedocs.io/)
 BRep kernel. Change one import and existing code produces native build123d
