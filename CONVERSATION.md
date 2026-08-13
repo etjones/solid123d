@@ -115,3 +115,11 @@ an isolated env. Ready for `uv publish` by user.
 
 **Assistant**: Added the actions/workflows/ci.yml badge under the README
 title, linked to the workflow page; committed and pushed.
+
+**User**: Published to PyPI (https://pypi.org/project/solid123d/). Asked
+for a release tag and GitHub release.
+
+**Assistant**: Verified PyPI live + CI green, tagged v0.1.0 (annotated),
+pushed the tag, and created the GitHub release with sdist + wheel
+attached and release notes: highlights, install line, known limitations.
+https://github.com/etjones/solid123d/releases/tag/v0.1.0
