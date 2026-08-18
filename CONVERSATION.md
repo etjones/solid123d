@@ -123,3 +123,34 @@ for a release tag and GitHub release.
 pushed the tag, and created the GitHub release with sdist + wheel
 attached and release notes: highlights, install line, known limitations.
 https://github.com/etjones/solid123d/releases/tag/v0.1.0
+
+## 2026-08-18
+
+**Context**: this patch was made from a separate downstream project,
+`scad123d` (imports OpenSCAD files as build123d geometry, layered on top of
+solid123d), during a session there. While designing scad123d's own
+Minkowski handling, it became clear solid123d's `minkowski()` raised
+`NotImplementedError` *unconditionally*, including for
+`minkowski()(A, sphere(r))` -- the shape-rounding idiom that accounts for
+the large majority of real-world `minkowski()` calls.
+
+**User**: asked how solid123d handles `hull()`/`minkowski()`, noting the
+sphere/circle case scad123d had just solved might apply here too, then
+asked for the patch to be written.
+
+**Assistant**: Patched `minkowski()` in `src/solid123d/booleans.py` to
+detect a bare, untransformed `sphere()`/`circle()` at the origin as either
+argument (via `BRepAdaptor_Surface`/`BRepAdaptor_Curve`, checking
+`GeomType.SPHERE`/`GeomType.CIRCLE` and that the primitive's center is
+within 1e-6 of the origin), and compute the sum as `offset(A, r,
+kind=Kind.ARC)` -- exact BRep, not an approximation. Verified against the
+3D and 2D Steiner formulas to ~1e-9 relative error, confirmed commutative
+(ball as either argument), and confirmed `minkowski(sphere(2), sphere(3))`
+resolves to a radius-5 sphere. Everything else -- general Minkowski sums,
+`hull()` -- still raises `NotImplementedError` exactly as before: no new
+dependencies, purely additive. Added `TestMinkowski` to
+`tests/test_solid123d.py` (6 cases) and updated the README's Supported/Known
+differences sections. All 50 tests pass. Committed directly to `main`
+(5ba9785) with the user's explicit go-ahead, since v0.1.0 is already
+published and this needs a version bump before the fix reaches PyPI users --
+left that decision to the user rather than bumping unasked.
