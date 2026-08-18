@@ -2,7 +2,7 @@ import math
 from pathlib import Path
 
 import pytest
-from build123d import Shape
+from build123d import GeomType, Shape
 
 from solid123d import (
     circle,
@@ -12,6 +12,7 @@ from solid123d import (
     hull,
     intersection,
     linear_extrude,
+    minkowski,
     mirror,
     polygon,
     rotate,
@@ -168,6 +169,61 @@ class TestBooleans:
     def test_hull_raises(self) -> None:
         with pytest.raises(NotImplementedError):
             hull()(cube(1), sphere(1))
+
+
+class TestMinkowski:
+    """minkowski()(A, sphere(r)) / minkowski()(A, circle(r)) -- a Minkowski
+    sum with a ball -- is exactly offset(A, r), computed natively by build123d.
+    This is the common real-world use of minkowski() (rounding a shape), so it
+    is handled exactly instead of raising NotImplementedError.
+    """
+
+    @staticmethod
+    def _steiner(volume: float, area: float, edges: list[tuple[float, float]], r: float) -> float:
+        return (
+            volume
+            + area * r
+            + r * r / 2 * sum(length * angle for length, angle in edges)
+            + (4 / 3) * math.pi * r**3
+        )
+
+    def test_box_plus_sphere_matches_steiner_formula(self) -> None:
+        box = cube([20, 15, 10], center=True)
+        shape = minkowski()(box, sphere(3))
+        edges = [(20, math.pi / 2)] * 4 + [(15, math.pi / 2)] * 4 + [(10, math.pi / 2)] * 4
+        expected = self._steiner(20 * 15 * 10, 2 * (300 + 200 + 150), edges, 3)
+        assert shape.volume == pytest.approx(expected, rel=1e-9)
+
+    def test_result_is_analytic_not_a_mesh(self) -> None:
+        shape = minkowski()(cube([20, 15, 10], center=True), sphere(3))
+        kinds = {f.geom_type for f in shape.faces()}
+        assert kinds == {GeomType.PLANE, GeomType.CYLINDER, GeomType.SPHERE}
+
+    def test_ball_may_come_first(self) -> None:
+        """minkowski() is commutative; the ball need not be the last argument."""
+        forward = minkowski()(cube([20, 15, 10], center=True), sphere(3))
+        backward = minkowski()(sphere(3), cube([20, 15, 10], center=True))
+        assert backward.volume == pytest.approx(forward.volume, rel=1e-9)
+
+    def test_2d_square_plus_circle_is_a_2d_offset(self) -> None:
+        """The 2D Steiner formula: area + perimeter*r + pi*r^2."""
+        shape = minkowski()(square([10, 10], center=True), circle(2))
+        expected = 100 + 40 * 2 + math.pi * 2**2
+        assert shape.area == pytest.approx(expected, rel=1e-9)
+
+    def test_non_ball_minkowski_still_raises(self) -> None:
+        with pytest.raises(NotImplementedError):
+            minkowski()(cube(10), cube(2))
+
+    def test_translated_sphere_does_not_match(self) -> None:
+        """Only a bare, untransformed ball is recognized -- matching how the
+        rounding idiom is actually written. A translated sphere is a
+        different (and much rarer) Minkowski sum, so it correctly falls
+        through to NotImplementedError rather than silently ignoring the
+        translation.
+        """
+        with pytest.raises(NotImplementedError):
+            minkowski()(cube(10), translate([5, 0, 0])(sphere(2)))
 
 
 class TestExtrusions:

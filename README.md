@@ -43,6 +43,11 @@ part = fillet(part.edges(), radius=2)   # native build123d from here on
   `scale`, `mirror`, `resize`, `color`, `offset`
 - **Booleans**: `union()`, `difference()`, `intersection()` — plus native
   operators `a + b`, `a - b`, `a & b`
+- **`minkowski()` with a sphere or circle** — `minkowski()(A, sphere(r))` /
+  `minkowski()(A, circle(r))`, by far the most common use of `minkowski()`
+  (rounding a shape), is computed exactly as `offset(A, r)`. This is exact
+  BRep geometry, not an approximation — see Known differences below for what
+  is still unsupported.
 - **2D → 3D**: `linear_extrude` (incl. `center`, `scale`; no `twist`),
   `rotate_extrude` (incl. partial `angle`)
 - **Export**: `scad_render_to_file` writes `.step`/`.stl`; a `.scad`
@@ -55,8 +60,11 @@ part = fillet(part.edges(), radius=2)   # native build123d from here on
 ## Known differences
 
 - `a * b` intersection is not overloaded; use `a & b` or `intersection()(a, b)`.
-- `hull()` and `minkowski()` raise `NotImplementedError` (no BRep equivalent);
-  in build123d these are usually a `loft`, `sweep`, `offset`, or fillet.
+- `hull()` always raises `NotImplementedError` (no BRep convex hull operator);
+  in build123d, a hull is usually a `loft` or an explicitly modeled shape.
+- `minkowski()` raises `NotImplementedError` except for the sphere/circle case
+  above; general Minkowski sums have no BRep equivalent. Use `offset()` or
+  fillet/chamfer on the build123d object instead.
 - `linear_extrude(twist=...)` raises `NotImplementedError`.
 - `$fn`/`segments` arguments are accepted and ignored — BRep curves are exact.
 - `scad_render()` (source string) raises `NotImplementedError`.
