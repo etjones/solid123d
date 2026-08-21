@@ -52,7 +52,7 @@ class TestPrimitives:
         assert_close(hi, (5, 5, 5))
 
     def test_cube_vector_size(self) -> None:
-        lo, hi = bbox(cube([1, 2, 3]))
+        _lo, hi = bbox(cube([1, 2, 3]))
         assert_close(hi, (1, 2, 3))
 
     def test_sphere_volume(self) -> None:

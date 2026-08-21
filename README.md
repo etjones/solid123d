@@ -43,11 +43,32 @@ part = fillet(part.edges(), radius=2)   # native build123d from here on
   `scale`, `mirror`, `resize`, `color`, `offset`
 - **Booleans**: `union()`, `difference()`, `intersection()` — plus native
   operators `a + b`, `a - b`, `a & b`
-- **`minkowski()` with a sphere or circle** — `minkowski()(A, sphere(r))` /
+- **`minkowski()` with a ball** — `minkowski()(A, sphere(r))` /
   `minkowski()(A, circle(r))`, by far the most common use of `minkowski()`
-  (rounding a shape), is computed exactly as `offset(A, r)`. This is exact
-  BRep geometry, not an approximation — see Known differences below for what
-  is still unsupported.
+  (rounding a shape), is computed exactly as `offset(A, r)` — including a
+  ball tessellated as an explicit `polyhedron()`, the way BOSL2 builds its
+  rounding kernels. Exact BRep geometry, not an approximation.
+- **`hull()`, for every case with a closed-form answer** — all computed as
+  exact BRep geometry: equal-radius spheres in any arrangement (including
+  the collinear capsule/slot idiom), equal-radius parallel cylinders
+  sharing a span (the "rounded box from corner posts" idiom), exactly two
+  spheres of *any* radii (two spherical caps sewn to their external
+  tangent cone; overlap and containment handled), exactly two 2D circles
+  (the keyhole/slot idiom), and any collection of purely flat-faced
+  children (cubes, `polyhedron()`s, extruded polygons — the hull is
+  exactly the convex hull of their vertices). See Known differences for
+  what still raises.
+- **`polyhedron(points, faces)`** — explicit point/face solids, with
+  OpenSCAD's tolerance for either winding direction.
+- **`color()` that survives into STEP export** — colored parts that don't
+  share volume (disjoint, or touching, like a part sitting in a cavity cut
+  for it) stay separate bodies, each keeping its own color, and every part
+  is labeled with the color name you wrote (`color("SteelBlue")` →
+  `steelblue`, numeric colors get the CSS name or hex), so multi-material
+  models open in slicers and CAD viewers with real per-part colors and
+  recognizable names instead of one gray `COMPOUND`. Genuinely overlapping
+  colored parts fuse (their merged region has no well-defined color) and
+  carry the first part's color. Uncolored models are entirely unaffected.
 - **2D → 3D**: `linear_extrude` (incl. `center`, `scale`; no `twist`),
   `rotate_extrude` (incl. partial `angle`)
 - **Export**: `scad_render_to_file` writes `.step`/`.stl`; a `.scad`
@@ -60,9 +81,13 @@ part = fillet(part.edges(), radius=2)   # native build123d from here on
 ## Known differences
 
 - `a * b` intersection is not overloaded; use `a & b` or `intersection()(a, b)`.
-- `hull()` always raises `NotImplementedError` (no BRep convex hull operator);
-  in build123d, a hull is usually a `loft` or an explicitly modeled shape.
-- `minkowski()` raises `NotImplementedError` except for the sphere/circle case
+- `hull()` raises `NotImplementedError` outside the closed-form cases
+  above — notably three or more spheres of unequal radii (their hull needs
+  planes tangent to three spheres at once, a genuinely harder object) and
+  mixtures of curved children. Model those explicitly (`loft`/`sweep`), or
+  import through [scad123d](https://github.com/etjones/scad123d), which
+  renders unsupported hulls as meshes via OpenSCAD.
+- `minkowski()` raises `NotImplementedError` except for the ball cases
   above; general Minkowski sums have no BRep equivalent. Use `offset()` or
   fillet/chamfer on the build123d object instead.
 - `linear_extrude(twist=...)` raises `NotImplementedError`.

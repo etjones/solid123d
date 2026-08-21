@@ -6,13 +6,26 @@ build123d is a BRep kernel, so curves are exact.
 
 from collections.abc import Sequence
 
-from build123d import Align, Box, Cone, Cylinder, FontStyle, Rectangle, Shape
+from build123d import (
+    Align,
+    Box,
+    Cone,
+    Cylinder,
+    Face,
+    FontStyle,
+    Rectangle,
+    Shape,
+    Shell,
+    Solid,
+    Vector,
+    Wire,
+)
 from build123d import Circle as _BdCircle
 from build123d import Polygon as _BdPolygon
 from build123d import Sphere as _BdSphere
 from build123d import Text as _BdText
 
-from ._common import group, vec3
+from ._common import vec3
 from .fonts import find_font_path, parse_font_spec
 
 _CENTERED = (Align.CENTER, Align.CENTER, Align.CENTER)
@@ -70,6 +83,39 @@ def circle(
 ) -> Shape:
     radius = r if r is not None else (d / 2 if d is not None else 1.0)
     return _BdCircle(radius)
+
+
+def polyhedron(
+    points: Sequence[Sequence[float]],
+    faces: Sequence[Sequence[int]] | None = None,
+    convexity: int | None = None,
+    triangles: Sequence[Sequence[int]] | None = None,
+) -> Shape:
+    """Build a solid from explicit points and index faces (OpenSCAD polyhedron).
+
+    Winding is not trusted: if the result encloses negative volume it is
+    reversed, matching OpenSCAD's tolerance for either orientation.
+    ``convexity`` is accepted and ignored (a preview hint in OpenSCAD);
+    ``triangles`` is OpenSCAD's deprecated pre-2014 spelling of ``faces``.
+    """
+    if faces is None:
+        faces = triangles
+    if faces is None:
+        raise ValueError("polyhedron() requires faces")
+    verts = [Vector(float(p[0]), float(p[1]), float(p[2])) for p in points]
+    built: list[Face] = []
+    for face in faces:
+        if len(face) < 3:
+            continue
+        loop = [verts[i] for i in face]
+        built.append(Face(Wire.make_polygon(loop, close=True)))
+    if not built:
+        raise ValueError("polyhedron() needs at least one face")
+
+    solid = Solid(Shell(built))
+    if solid.volume < 0:
+        solid = Solid(solid.wrapped.Complemented())
+    return solid
 
 
 def polygon(

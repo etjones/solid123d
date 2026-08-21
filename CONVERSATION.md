@@ -154,3 +154,31 @@ differences sections. All 50 tests pass. Committed directly to `main`
 (5ba9785) with the user's explicit go-ahead, since v0.1.0 is already
 published and this needs a version bump before the fix reaches PyPI users --
 left that decision to the user rather than bumping unasked.
+
+## 2026-08-21 — Analytic hull() and expanded minkowski() (ported from scad123d)
+
+Ported scad123d's analytic geometry cores into solid123d as `hull.py` and
+`minkowski.py`, making solid123d the canonical home (scad123d will import
+them back in a follow-up). `hull()` now evaluates exactly: equal-radius
+spheres (incl. collinear capsules), equal-radius parallel cylinders sharing
+a span, two spheres of any radii (sewn cap/tangent-cone construction, with
+containment and overlap handled), two 2D circles (keyhole/stadium), and
+all-polyhedral children (via ConvexPolyhedron). `minkowski()` additionally
+recognizes polyhedron-tessellated ball kernels (BOSL2-style). Added the
+missing `polyhedron(points, faces)` primitive. Everything else still raises
+NotImplementedError with messages naming exactly what is supported.
+Zero new dependencies (scipy/numpy already come with build123d). 19 new
+tests; 68 total pass. Version bumped to 0.2.0.
+
+## 2026-08-21 — color() preservation and part labels (added to the same PR)
+
+Ported scad123d's color-preservation core into `group()` (the implicit
+union behind `union()` and every applier): colored children with zero
+shared volume stay a Compound of separate bodies with their own colors;
+overlap fuses with the first child's color; uncolored groups take the
+plain fuse untouched (gated before any mass-property work). `color()` now
+also labels parts -- with the author's literal name string (an improvement
+scad123d can't match: OpenSCAD's CSG export discards names, forcing a
+reverse lookup there), or CSS-name/hex for numeric colors. group() also
+gained OpenSCAD's 2D/3D-mixing warning. `color_label` exported for
+scad123d's dedup follow-up. 12 new tests; 80 total pass.

@@ -7,13 +7,17 @@ with regular build123d code and exported to STEP/STL.
 
 from build123d import Shape
 
+from ._common import color_label
 from .booleans import difference, hull, intersection, minkowski, union
 from .extrusions import linear_extrude, rotate_extrude
+from .hull import analytic_hull
+from .minkowski import analytic_minkowski
 from .primitives import (
     circle,
     cube,
     cylinder,
     polygon,
+    polyhedron,
     sphere,
     square,
     text,
@@ -37,8 +41,11 @@ OpenSCADObjectPlus = Shape
 __all__ = [
     "OpenSCADObject",
     "OpenSCADObjectPlus",
+    "analytic_hull",
+    "analytic_minkowski",
     "circle",
     "color",
+    "color_label",
     "cube",
     "cylinder",
     "difference",
@@ -49,6 +56,7 @@ __all__ = [
     "mirror",
     "offset",
     "polygon",
+    "polyhedron",
     "resize",
     "rotate",
     "rotate_extrude",

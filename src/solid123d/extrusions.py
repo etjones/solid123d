@@ -8,7 +8,7 @@ from build123d import loft as _bd_loft
 from build123d import revolve as _bd_revolve
 from build123d import scale as _bd_scale
 
-from ._common import group, vec3
+from ._common import group
 
 Applier = Callable[..., Shape]
 
