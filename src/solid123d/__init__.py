@@ -7,6 +7,7 @@ with regular build123d code and exported to STEP/STL.
 
 from build123d import Shape
 
+from ._common import color_label
 from .booleans import difference, hull, intersection, minkowski, union
 from .extrusions import linear_extrude, rotate_extrude
 from .hull import analytic_hull
@@ -44,6 +45,7 @@ __all__ = [
     "analytic_minkowski",
     "circle",
     "color",
+    "color_label",
     "cube",
     "cylinder",
     "difference",

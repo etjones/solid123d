@@ -169,3 +169,16 @@ missing `polyhedron(points, faces)` primitive. Everything else still raises
 NotImplementedError with messages naming exactly what is supported.
 Zero new dependencies (scipy/numpy already come with build123d). 19 new
 tests; 68 total pass. Version bumped to 0.2.0.
+
+## 2026-08-21 — color() preservation and part labels (added to the same PR)
+
+Ported scad123d's color-preservation core into `group()` (the implicit
+union behind `union()` and every applier): colored children with zero
+shared volume stay a Compound of separate bodies with their own colors;
+overlap fuses with the first child's color; uncolored groups take the
+plain fuse untouched (gated before any mass-property work). `color()` now
+also labels parts -- with the author's literal name string (an improvement
+scad123d can't match: OpenSCAD's CSG export discards names, forcing a
+reverse lookup there), or CSS-name/hex for numeric colors. group() also
+gained OpenSCAD's 2D/3D-mixing warning. `color_label` exported for
+scad123d's dedup follow-up. 12 new tests; 80 total pass.

@@ -22,6 +22,7 @@ classifiers = [
 dependencies = [
   "build123d>=0.11.1",
   "fonttools>=4.0",
+  "webcolors>=24.8",
 ]
 
 [project.urls]

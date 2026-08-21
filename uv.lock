@@ -1292,6 +1292,7 @@ source = { editable = "." }
 dependencies = [
     { name = "build123d" },
     { name = "fonttools" },
+    { name = "webcolors" },
 ]
 
 [package.dev-dependencies]
@@ -1304,6 +1305,7 @@ dev = [
 requires-dist = [
     { name = "build123d", specifier = ">=0.11.1" },
     { name = "fonttools", specifier = ">=4.0" },
+    { name = "webcolors", specifier = ">=24.8" },
 ]
 
 [package.metadata.requires-dev]

@@ -12,7 +12,7 @@ from build123d import mirror as _bd_mirror
 from build123d import offset as _bd_offset
 from build123d import scale as _bd_scale
 
-from ._common import group, vec3
+from ._common import color_label, group, vec3
 
 Applier = Callable[..., Shape]
 
@@ -98,15 +98,22 @@ def resize(
 def color(c: str | Sequence[float], alpha: float = 1.0) -> Applier:
     if isinstance(c, str):
         col = Color(c, alpha=alpha)
+        # The author wrote a name -- label with exactly that, no lookup.
+        # (scad123d has to reverse-lookup names from rgba because
+        # OpenSCAD's CSG export discards them; here the name never leaves.)
+        label = c.lower()
     else:
         vals = [float(x) for x in c]
         if len(vals) == 3:
             vals.append(alpha)
         col = Color(*vals)
+        label = color_label(vals)
 
     def apply(*children: Shape) -> Shape:
         shape = group(children)
         shape.color = col
+        if not shape.label:
+            shape.label = label
         return shape
 
     return apply
