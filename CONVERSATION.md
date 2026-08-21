@@ -154,3 +154,18 @@ differences sections. All 50 tests pass. Committed directly to `main`
 (5ba9785) with the user's explicit go-ahead, since v0.1.0 is already
 published and this needs a version bump before the fix reaches PyPI users --
 left that decision to the user rather than bumping unasked.
+
+## 2026-08-21 — Analytic hull() and expanded minkowski() (ported from scad123d)
+
+Ported scad123d's analytic geometry cores into solid123d as `hull.py` and
+`minkowski.py`, making solid123d the canonical home (scad123d will import
+them back in a follow-up). `hull()` now evaluates exactly: equal-radius
+spheres (incl. collinear capsules), equal-radius parallel cylinders sharing
+a span, two spheres of any radii (sewn cap/tangent-cone construction, with
+containment and overlap handled), two 2D circles (keyhole/stadium), and
+all-polyhedral children (via ConvexPolyhedron). `minkowski()` additionally
+recognizes polyhedron-tessellated ball kernels (BOSL2-style). Added the
+missing `polyhedron(points, faces)` primitive. Everything else still raises
+NotImplementedError with messages naming exactly what is supported.
+Zero new dependencies (scipy/numpy already come with build123d). 19 new
+tests; 68 total pass. Version bumped to 0.2.0.

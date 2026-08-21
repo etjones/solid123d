@@ -53,7 +53,7 @@ def _faces_in_file(path: Path) -> list[tuple[str, str]]:
             if family:
                 faces.append((family, subfamily))
             font.close()
-    except Exception:
+    except Exception:  # noqa: BLE001, S110 -- probing arbitrary font files; unreadable ones are simply skipped
         pass
     return faces
 
