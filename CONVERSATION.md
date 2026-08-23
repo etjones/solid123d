@@ -182,3 +182,16 @@ scad123d can't match: OpenSCAD's CSG export discards names, forcing a
 reverse lookup there), or CSS-name/hex for numeric colors. group() also
 gained OpenSCAD's 2D/3D-mixing warning. `color_label` exported for
 scad123d's dedup follow-up. 12 new tests; 80 total pass.
+
+## 2026-08-23 — hull() of pre-fused/grouped children (Gridfinity bug)
+
+A Gridfinity cup import produced silently-wrong geometry (10% of true
+volume): OpenSCAD wraps module-call bodies in group(), so `hull()
+corner_posts();` arrives as ONE pre-fused compound of four cylinders, and
+analytic_hull's single-child identity shortcut returned it unchanged --
+correct only for convex children. Fix: explode inputs into component
+solids/faces before classification (hulls are decomposition-invariant),
+and delete the identity shortcut outright (single convex primitives still
+come back exact via their rungs; hull of a single non-convex child now
+computes the true hull). Verified against the full Gridfinity cup:
+0.03% volume agreement with OpenSCAD. 4 new tests; 84 pass. -> 0.2.1

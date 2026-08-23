@@ -542,12 +542,43 @@ def _hull_of_two_circles(shapes: list[Shape]) -> Shape | None:
     return face
 
 
+def _component_shapes(shapes: list[Shape]) -> list[Shape]:
+    """Explode each input into its independent component solids (or faces,
+    for 2D input) before classification.
+
+    A hull is decomposition-invariant -- hull(A union B) == hull(A, B) -- so
+    splitting inputs never changes the answer, and it is what lets real
+    call patterns reach the rungs at all: OpenSCAD wraps a module-call body
+    in group(), so ``hull() corner_posts();`` arrives as ONE pre-fused
+    compound of four cylinders, not four cylinder children. Found the hard
+    way: a Gridfinity cup silently lost the rounded-box hull this way.
+    """
+    out: list[Shape] = []
+    for s in shapes:
+        solids = s.solids()
+        if len(solids) > 1:
+            out.extend(solids)
+        elif solids:
+            out.append(s)
+        else:
+            faces = s.faces()
+            out.extend(faces if len(faces) > 1 else [s])
+    return out
+
+
 def analytic_hull(shapes: list[Shape]) -> Shape | None:
-    """Try to evaluate hull() analytically; None means no closed form here."""
+    """Try to evaluate hull() analytically; None means no closed form here.
+
+    There is deliberately no single-child identity shortcut: hull(X) == X
+    only when X is convex, which is unknowable cheaply -- and a single
+    child is often a pre-fused group of many parts (see
+    _component_shapes). Single convex primitives still come back exact
+    through their rungs; anything unclassifiable returns None rather than
+    risking a silently-wrong passthrough.
+    """
     if not shapes:
         return None
-    if len(shapes) == 1:
-        return shapes[0]
+    shapes = _component_shapes(shapes)
     result = _hull_of_spheres(shapes)
     if result is not None:
         return result

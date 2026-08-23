@@ -181,3 +181,50 @@ class TestMinkowski:
     def test_unsupported_minkowski_raises(self):
         with pytest.raises(NotImplementedError):
             s.minkowski()(s.cube(10), s.cube(5))
+
+
+class TestHullGroupedChildren:
+    """hull() of pre-fused inputs: OpenSCAD wraps module-call bodies in
+    group(), so real hulls often arrive as ONE compound child. Inputs are
+    exploded into component solids before classification (decomposition
+    never changes a hull), and there is deliberately no single-child
+    identity shortcut -- hull(X) == X only for convex X. A Gridfinity cup
+    silently lost its rounded-box hull to that shortcut.
+    """
+
+    def test_hull_of_prefused_corner_posts_is_the_rounded_box(self):
+        import math
+
+        posts = s.union()(
+            *[
+                s.translate([x, y, 0])(s.cylinder(r=2, h=10))
+                for x in (0, 20)
+                for y in (0, 20)
+            ]
+        )
+        shape = s.hull()(posts)
+        expected = (400 + 4 * 2 * 20 + math.pi * 4) * 10
+        assert shape.volume == pytest.approx(expected, rel=1e-9)
+
+    def test_hull_of_prefused_sphere_pair_is_the_tangent_cone_hull(self):
+        pair = s.union()(s.sphere(3), s.translate([14, 0, 0])(s.sphere(5)))
+        shape = s.hull()(pair)
+        assert shape.volume == pytest.approx(_pair_hull_volume(3, 5, 14), rel=1e-9)
+
+    def test_hull_of_single_convex_primitives_is_identity_via_rungs(self):
+        import math
+
+        assert s.hull()(s.cube(10)).volume == pytest.approx(1000, rel=1e-9)
+        assert s.hull()(s.sphere(3)).volume == pytest.approx(
+            (4 / 3) * math.pi * 27, rel=1e-9
+        )
+        assert s.hull()(s.cylinder(r=2, h=5)).volume == pytest.approx(
+            math.pi * 4 * 5, rel=1e-9
+        )
+
+    def test_hull_of_single_nonconvex_child_is_its_true_hull(self):
+        lshape = s.union()(s.cube([20, 10, 10]), s.cube([10, 20, 10]))
+        shape = s.hull()(lshape)
+        # The L's hull fills in the missing corner: a 10x10 right-triangle
+        # prism of volume 500 on top of the L's own 3000.
+        assert shape.volume == pytest.approx(3500, rel=1e-9)
