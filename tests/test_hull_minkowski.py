@@ -114,6 +114,42 @@ class TestHull2D:
         face = s.hull()(s.circle(5), s.circle(5))
         assert face.area == pytest.approx(math.pi * 25, rel=1e-9)
 
+    def test_two_offset_squares(self):
+        # The Gridfinity silverware tray's label-slot profile: hull of two
+        # axis-aligned rectangles at different widths/offsets. The hull is a
+        # trapezoid-sided hexagon; check against the shoelace area of the
+        # exact vertex hull.
+        face = s.hull()(
+            s.translate([0, 10])(s.square([101.616, 20], center=True)),
+            s.translate([0, -12.1])(s.square([84, 24.2], center=True)),
+        )
+        assert face is not None and not face.solids()
+        # vertices of the hull, counterclockwise
+        pts = [
+            (50.808, 20.0),
+            (-50.808, 20.0),
+            (-50.808, 0.0),
+            (-42.0, -24.2),
+            (42.0, -24.2),
+            (50.808, 0.0),
+        ]
+        shoelace = 0.5 * abs(
+            sum(
+                pts[i][0] * pts[(i + 1) % 6][1] - pts[(i + 1) % 6][0] * pts[i][1]
+                for i in range(6)
+            )
+        )
+        assert face.area == pytest.approx(shoelace, rel=1e-9)
+
+    def test_contained_square_yields_outer_square(self):
+        face = s.hull()(s.square(20, center=True), s.square(5, center=True))
+        assert face.area == pytest.approx(400, rel=1e-9)
+
+    def test_square_circle_mix_still_raises(self):
+        # mixed curved + polygonal 2D hull has no rung yet
+        with pytest.raises(NotImplementedError):
+            s.hull()(s.square(10), s.translate([20, 0])(s.circle(3)))
+
 
 class TestHullPolyhedral:
     def test_two_cubes(self):

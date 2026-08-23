@@ -38,8 +38,17 @@ def linear_extrude(
         if scale_xy == (1.0, 1.0):
             solid = _bd_extrude(face, amount=height)
         else:
-            top = _bd_scale(face, by=(scale_xy[0], scale_xy[1], 1.0))
-            solid = _bd_loft([face, Pos(0, 0, height) * top])
+            # OCCT's loft accepts one face per section, so a disconnected
+            # profile (a compound of several faces) must be lofted face by
+            # face. about=(0,0,0) is load-bearing: OpenSCAD scales the whole
+            # cross-section about the global Z axis, so an off-axis island's
+            # top must migrate toward the axis, not shrink in place (which is
+            # what build123d's default -- each object's own location -- does).
+            solids = []
+            for f in face.faces():
+                top = _bd_scale(f, by=(scale_xy[0], scale_xy[1], 1.0), about=(0, 0, 0))
+                solids.append(_bd_loft([f, Pos(0, 0, height) * top]))
+            solid = solids[0] if len(solids) == 1 else group(solids)
         if center:
             solid = Pos(0, 0, -height / 2) * solid
         return solid

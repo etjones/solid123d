@@ -246,6 +246,31 @@ class TestExtrusions:
         full = linear_extrude(height=6)(square(4, center=True))
         assert shape.volume < full.volume
 
+    def test_linear_extrude_scale_disconnected_profile(self) -> None:
+        # A profile of several disjoint faces (common in real models: pockets,
+        # standoffs) must loft each island separately -- OCCT's loft rejects a
+        # multi-face compound as a section with "BRep_API: command not done".
+        profile = union()(
+            translate([-6, 0])(square(2, center=True)),
+            translate([6, 0])(square(2, center=True)),
+        )
+        shape = linear_extrude(height=4, scale=0.5)(profile)
+        # each island is a frustum tapering about the global Z axis:
+        # volume = h/3 * (A1 + A2 + sqrt(A1*A2)) with A1=4, A2=1 -> 28/3 each
+        assert shape.volume == pytest.approx(2 * 28 / 3, rel=1e-6)
+
+    def test_linear_extrude_scale_off_axis_scales_about_origin(self) -> None:
+        # OpenSCAD scales the cross-section about the global Z axis, so an
+        # off-axis island's top face migrates toward the axis rather than
+        # shrinking in place.
+        shape = linear_extrude(height=4, scale=0.5)(
+            translate([6, 0])(square(2, center=True))
+        )
+        lo, hi = bbox(shape)
+        # top square spans x in [2.5, 3.5]; bottom spans [5, 7]
+        assert lo[0] == pytest.approx(2.5)
+        assert hi[0] == pytest.approx(7)
+
     def test_rotate_extrude_torus(self) -> None:
         shape = rotate_extrude()(translate([10, 0, 0])(circle(r=2)))
         # torus volume: 2 * pi^2 * R * r^2

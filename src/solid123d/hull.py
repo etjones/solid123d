@@ -542,6 +542,42 @@ def _hull_of_two_circles(shapes: list[Shape]) -> Shape | None:
     return face
 
 
+def _hull_of_polygons(shapes: list[Shape]) -> Face | None:
+    """Rung 3 one dimension down: hull() of children that are all
+    straight-edged faces in the XY plane is exactly the 2D convex hull of
+    their combined vertices -- same vertex argument as _hull_of_polyhedra.
+
+    Like the two-circle rung, this matters beyond exactness: OpenSCAD
+    cannot render a 2D subtree to a mesh, so a 2D hull that reaches the
+    fallback hard-fails ("Current top level object is not a 3D object")
+    rather than degrading. Declines on any curved edge, and on vertices
+    off the XY plane (a 2D shape should never have them, but a hull built
+    from bad input would be silently wrong rather than loudly absent).
+    """
+    for s in shapes:
+        if s.solids():
+            return None
+        faces = s.faces()
+        if not faces:
+            return None
+        if any(e.geom_type != GeomType.LINE for f in faces for e in f.edges()):
+            return None
+        if any(abs(v.Z) > 1e-9 for v in s.vertices()):
+            return None
+    points = [(v.X, v.Y) for s in shapes for v in s.vertices()]
+    try:
+        hull = ConvexHull(np.asarray(points))
+    except Exception:  # noqa: BLE001
+        return None
+    # qhull returns 2D hull vertices already in counterclockwise order.
+    ordered = [tuple(float(x) for x in points[i]) for i in hull.vertices]
+    try:
+        result = Polygon(*ordered, align=None)
+    except Exception:  # noqa: BLE001
+        return None
+    return result if result.is_valid else None
+
+
 def _component_shapes(shapes: list[Shape]) -> list[Shape]:
     """Explode each input into its independent component solids (or faces,
     for 2D input) before classification.
@@ -586,6 +622,9 @@ def analytic_hull(shapes: list[Shape]) -> Shape | None:
     if result is not None:
         return result
     result = _hull_of_two_circles(shapes)
+    if result is not None:
+        return result
+    result = _hull_of_polygons(shapes)
     if result is not None:
         return result
     return _hull_of_polyhedra(shapes)
