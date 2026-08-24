@@ -126,9 +126,7 @@ def polygon(
     pts = [(float(p[0]), float(p[1])) for p in points]
     if paths is None:
         return _BdPolygon(*pts, align=None)
-    faces = [
-        _BdPolygon(*[pts[i] for i in path], align=None) for path in paths
-    ]
+    faces = [_BdPolygon(*[pts[i] for i in path], align=None) for path in paths]
     outer = faces[0]
     for hole in faces[1:]:
         outer -= hole

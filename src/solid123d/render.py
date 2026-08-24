@@ -29,8 +29,7 @@ def scad_render_to_file(
     if suffix == ".scad":
         path = path.with_suffix(".step")
         warnings.warn(
-            f"solid123d cannot write OpenSCAD source; exporting STEP to "
-            f"{path} instead",
+            f"solid123d cannot write OpenSCAD source; exporting STEP to {path} instead",
             stacklevel=2,
         )
         suffix = ".step"
