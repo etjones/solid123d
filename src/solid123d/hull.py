@@ -14,12 +14,15 @@
 - All-polyhedral children: exactly the convex hull of their combined
   vertices, via build123d's ConvexPolyhedron. Covers cubes, polyhedron()s,
   extruded polygons, and matrix-transformed anything-planar.
-- Identical vertical-axis revolution solids (cylinder/cone faces) repeated
-  by translation in the XY plane -- the ``hull() cornercopy(...)`` idiom:
-  hull(identical translates of X) == conv(centers) (+) conv(X), a Minkowski
-  sum realized as a ruled loft of rounded-polygon sections. Covers unequal
-  cones, tapered pads, and stacked-cylinder bevels (Gridfinity's entire
-  base system). See _hull_of_revolved_translates.
+- Identical revolution solids (cylinder/cone/sphere/torus faces about
+  one shared axis, pointing anywhere) repeated by translation
+  perpendicular to that axis -- the ``hull() cornercopy(...)`` idiom:
+  hull(identical translates of X) == conv(centers) (+) conv(X), realized
+  over the normal fan of the centers polygon. Line-only profiles use a
+  ruled loft; profiles with arcs get sewn sphere/torus corner bands and
+  horizontal-cylinder side bands. Covers tapered pads, stacked bevels,
+  filleted cavity posts (roundedCylinder/roundedDisk idioms), and turned
+  legs. See _hull_of_revolved_translates.
 
 ``analytic_hull`` returns None for anything else -- notably three or more
 non-collinear spheres of unequal radii, whose hull needs tritangent planes
@@ -41,6 +44,7 @@ import numpy as np
 from build123d import (
     Align,
     Circle,
+    Compound,
     Cone,
     ConvexPolyhedron,
     Cylinder,
@@ -69,7 +73,12 @@ from build123d import (
     offset as _bd_offset,
 )
 from OCP.BRepAdaptor import BRepAdaptor_Surface
-from OCP.GeomAbs import GeomAbs_Cone, GeomAbs_Cylinder, GeomAbs_Sphere
+from OCP.GeomAbs import (
+    GeomAbs_Cone,
+    GeomAbs_Cylinder,
+    GeomAbs_Sphere,
+    GeomAbs_Torus,
+)
 from scipy.spatial import ConvexHull
 
 from .primitives import polyhedron
@@ -588,72 +597,143 @@ def _hull_of_polygons(shapes: list[Shape]) -> Face | None:
     return result if result.is_valid else None
 
 
-def _vertical_revolution_profile(
-    shape: Shape,
-) -> tuple[Point2, list[Point2]] | None:
-    """((cx, cy), [(z, r), ...]) if shape is a solid of revolution about a
-    vertical axis built from cylinder/cone side faces and horizontal planes.
+# --- phase B: profiles with arcs, arbitrary shared axis ------------------
+#
+# The theory: hull(identical translates of X) == conv(centers) (+) conv(X)
+# (support functions add under Minkowski sum, max under union). For X a
+# solid of revolution, conv(X) is determined by the upper convex envelope
+# of its (z, r) profile -- computed below as a literal support-function
+# sweep -- and the sum's boundary decomposes over the normal fan of the
+# centers polygon: each envelope piece extrudes along every polygon edge
+# and revolves around every polygon vertex. Lines become planes/cones,
+# arcs become horizontal cylinders and sphere/torus bands; all native OCCT
+# surfaces, sewn (not fused -- every junction is tangent contact, where
+# OCCT booleans are least reliable) into one solid.
 
-    The profile points are simply the shape's vertices as (z, radial
-    distance from the axis): for line-profile revolution solids every
-    silhouette extreme lies on a rim, and rims contribute their vertices.
-    Spheres and tori are deliberately out (their silhouettes are not
-    determined by vertices); they classify as None and the rung declines.
+# ("pt", (z, r)) or ("circle", (zc, rc), rho, key) in the (z, r) plane.
+_ProfileElement = tuple
+
+_ANG_EPS = 1e-12
+
+
+def _psi_in_spans(psi: float, spans: list[tuple[float, float]]) -> bool:
+    two_pi = 2 * math.pi
+    for a, b in spans:
+        if b - a >= two_pi - 1e-6:
+            return True
+        rel = (psi - a) % two_pi
+        if rel <= (b - a) % two_pi + 1e-9:
+            return True
+    return False
+
+
+def _elem_support(
+    elem: _ProfileElement, psi: float, trims: dict
+) -> tuple[float, Point2]:
+    """Support value and point of an element in direction (cos psi, sin
+    psi). A trimmed circle only supports directions inside its trimmed
+    spans -- outside them its true support is an endpoint, and those
+    endpoints are separate point elements -- so it drops out (-inf) rather
+    than lending boundary the child does not have.
     """
-    if not shape.solids():
-        return None
-    axis_xy: Point2 | None = None
-    for f in shape.faces():
-        if f.geom_type == GeomType.PLANE:
-            n = f.normal_at()
-            if abs(abs(n.Z) - 1.0) > _PARALLEL_TOL:
-                return None
-            continue
-        surf = BRepAdaptor_Surface(f.wrapped)
-        kind = surf.GetType()
-        if kind == GeomAbs_Cylinder:
-            ax = surf.Cylinder().Axis()
-        elif kind == GeomAbs_Cone:
-            ax = surf.Cone().Axis()
+    u = (math.cos(psi), math.sin(psi))
+    if elem[0] == "pt":
+        p = elem[1]
+        return p[0] * u[0] + p[1] * u[1], p
+    _, c, rho, key = elem
+    spans = trims.get(key)
+    if spans is not None and not _psi_in_spans(psi, spans):
+        return -math.inf, c
+    return (
+        c[0] * u[0] + c[1] * u[1] + rho,
+        (c[0] + rho * u[0], c[1] + rho * u[1]),
+    )
+
+
+def _switch_angles(e1: _ProfileElement, e2: _ProfileElement) -> list[float]:
+    """psi in (0, pi) where the two elements' support values tie."""
+    c1, r1 = e1[1], (0.0 if e1[0] == "pt" else e1[2])
+    c2, r2 = e2[1], (0.0 if e2[0] == "pt" else e2[2])
+    a, b, k = c1[0] - c2[0], c1[1] - c2[1], r2 - r1
+    m = math.hypot(a, b)
+    if m < 1e-12 or abs(k) > m:
+        return []
+    base = math.atan2(b, a)
+    off = math.acos(max(-1.0, min(1.0, k / m)))
+    out = []
+    for cand in ((base + off) % (2 * math.pi), (base - off) % (2 * math.pi)):
+        if _ANG_EPS < cand < math.pi - _ANG_EPS:
+            out.append(cand)
+    return out
+
+
+def _upper_envelope(
+    elements: list[_ProfileElement], trims: dict | None = None
+) -> list[tuple]:
+    """Upper convex envelope of points and circles in the (z, r) plane, as
+    an ordered curve chain left (min z) to right (max z). Pieces:
+    ("line", p1, p2) and ("arc", center, rho, t_hi, t_lo, key) -- arc
+    parameter t is the direction angle, point = c + rho*(cos t, sin t) in
+    (z, r); t decreases along the chain. This sweep over support
+    directions IS the 1D normal-fan computation: between consecutive
+    switch angles the supporting element is constant, and each interval
+    contributes that element's boundary. Trim-span endpoints join the
+    switch-angle candidates because the support function kinks there.
+    """
+    trims = trims or {}
+    angles = {_ANG_EPS, math.pi - _ANG_EPS}
+    n = len(elements)
+    for i in range(n):
+        for j in range(i + 1, n):
+            angles.update(_switch_angles(elements[i], elements[j]))
+    for spans in trims.values():
+        for span in spans:
+            for a in span:
+                a = a % (2 * math.pi)
+                if _ANG_EPS < a < math.pi - _ANG_EPS:
+                    angles.add(a)
+    # cluster near-identical candidates: a trim endpoint that lands exactly
+    # on a tangency otherwise splits one arc into two co-surface pieces
+    ordered: list[float] = []
+    for a in sorted(angles, reverse=True):
+        if not ordered or ordered[-1] - a > 1e-9:
+            ordered.append(a)
+
+    intervals: list[tuple[int, float, float]] = []
+    for hi, lo in pairwise(ordered):
+        mid = (hi + lo) / 2
+        best = max(range(n), key=lambda i: _elem_support(elements[i], mid, trims)[0])
+        if intervals and intervals[-1][0] == best:
+            intervals[-1] = (best, intervals[-1][1], lo)
         else:
-            return None
-        if abs(abs(ax.Direction().Z()) - 1.0) > _PARALLEL_TOL:
-            return None
-        loc = ax.Location()
-        xy = (loc.X(), loc.Y())
-        if axis_xy is None:
-            axis_xy = xy
-        elif math.hypot(xy[0] - axis_xy[0], xy[1] - axis_xy[1]) > 1e-6:
-            return None
-    if axis_xy is None:
-        return None
-    points = [
-        (v.Z, math.hypot(v.X - axis_xy[0], v.Y - axis_xy[1])) for v in shape.vertices()
-    ]
-    return axis_xy, points
+            intervals.append((best, hi, lo))
 
-
-def _upper_chain(points: list[Point2]) -> list[Point2]:
-    """The upper concave envelope of (z, r) points: r as a function of z on
-    the boundary of their 2D convex hull. This IS the hull's silhouette
-    radius: combining boundary circles (z1, r1) and (z2, r2) at the same
-    angular position yields radius lerp(r1, r2) at z lerp(z1, z2), so the
-    max radius at each z is the concave envelope and nothing more.
-    """
-    best: dict[float, float] = {}
-    for z, r in points:
-        zk = round(z, 9)
-        best[zk] = max(best.get(zk, -math.inf), r)
-    pts = sorted(best.items())
-    chain: list[Point2] = []
-    for p in pts:
-        while len(chain) >= 2:
-            (z1, r1), (z2, r2) = chain[-2], chain[-1]
-            if (z2 - z1) * (p[1] - r1) - (r2 - r1) * (p[0] - z1) >= 0:
-                chain.pop()
+    chain: list[tuple] = []
+    prev_end: Point2 | None = None
+    for idx, hi, lo in intervals:
+        elem = elements[idx]
+        if elem[0] == "pt":
+            p = elem[1]
+            if prev_end is not None and math.dist(prev_end, p) > 1e-6:
+                chain.append(("line", prev_end, p))
+            prev_end = p
+        else:
+            _, c, rho, key = elem
+            start = (c[0] + rho * math.cos(hi), c[1] + rho * math.sin(hi))
+            end = (c[0] + rho * math.cos(lo), c[1] + rho * math.sin(lo))
+            if prev_end is not None and math.dist(prev_end, start) > 1e-6:
+                chain.append(("line", prev_end, start))
+            if (
+                chain
+                and chain[-1][0] == "arc"
+                and chain[-1][5] == key
+                and abs(chain[-1][4] - hi) < 1e-9
+            ):
+                prev = chain.pop()
+                chain.append(("arc", c, rho, prev[3], lo, key))
             else:
-                break
-        chain.append(p)
+                chain.append(("arc", c, rho, hi, lo, key))
+            prev_end = end
     return chain
 
 
@@ -710,63 +790,353 @@ def _rounded_section(hull_pts: list[Point2], r: float, z: float) -> Shape:
     return Pos(0, 0, z) * Face(Wire(edges))
 
 
-def _hull_of_revolved_translates(shapes: list[Shape]) -> Shape | None:
-    """hull() of one vertical-axis revolution profile repeated by XY
-    translation -- the ``hull() cornercopy(...)`` idiom (tapered pads,
-    stacked-cylinder bevels, turned legs with straight tapers).
-
-    The identity doing the work: for identical translates,
-    hull(union of X + c_i) == conv({c_i}) (+) conv(X). conv(X) for a
-    vertical revolution solid is the revolution of the upper concave
-    envelope of its (z, r) profile, so the sum's cross-section at height z
-    is the centers' 2D hull offset by the envelope radius r(z) -- built
-    here as a ruled loft of rounded-polygon sections at the envelope's
-    breakpoints (planes and cones between sections; exact, since a ruled
-    surface between concentric equal-angle arcs is a cone).
-
-    A center may carry several component solids (a disjoint stacked bevel
-    arrives as two cylinders per corner); their profile points pool before
-    the envelope. Declines when any child isn't a vertical cylinder/cone
-    revolution, when centers' profiles differ, or when the envelope
-    touches r=0 (apex sections need a vertex loft this doesn't build).
-    The result is self-checked against the closed-form volume
-    integral of the 2D Steiner formula A(r) = A0 + P0*r + pi*r^2.
+def _profile_elements(
+    shape: Shape,
+) -> tuple[Point2, list[_ProfileElement], dict] | None:
+    """(center_xy, envelope elements, arc trims) for a vertical-axis
+    revolution child. Vertices contribute points (they cover every
+    silhouette extreme of line-profile faces); sphere and torus faces
+    contribute circles in the (z, r) plane, with their trimmed angular
+    spans recorded so the envelope can verify it only used boundary that
+    actually exists on the child.
     """
-    classified = [_vertical_revolution_profile(s) for s in shapes]
+    if not shape.solids():
+        return None
+    axis_xy: Point2 | None = None
+    circles: list[tuple] = []  # (zc, rc, rho, t_span or None, sphere_xy)
+    for f in shape.faces():
+        if f.geom_type == GeomType.PLANE:
+            n = f.normal_at()
+            if abs(abs(n.Z) - 1.0) > _PARALLEL_TOL:
+                return None
+            continue
+        surf = BRepAdaptor_Surface(f.wrapped)
+        kind = surf.GetType()
+        if kind == GeomAbs_Sphere:
+            sph = surf.Sphere()
+            loc = sph.Location()
+            xy = (loc.X(), loc.Y())
+            # profile angle t = pi/2 - s*latitude, s the sign of the
+            # surface's own axis: a rotation that lands the shared axis on
+            # -Z flips the V convention with it.
+            s_ax = sph.Position().Direction().Z()
+            if abs(abs(s_ax) - 1.0) > _PARALLEL_TOL:
+                return None
+            v1, v2 = surf.FirstVParameter(), surf.LastVParameter()
+            if s_ax > 0:
+                t_span = (math.pi / 2 - v2, math.pi / 2 - v1)
+            else:
+                t_span = (math.pi / 2 + v1, math.pi / 2 + v2)
+            circles.append((loc.Z(), 0.0, sph.Radius(), t_span, xy))
+        elif kind == GeomAbs_Torus:
+            tor = surf.Torus()
+            ax = tor.Axis()
+            if abs(abs(ax.Direction().Z()) - 1.0) > _PARALLEL_TOL:
+                return None
+            if tor.MinorRadius() > tor.MajorRadius() - 1e-9:
+                return None  # spindle/degenerate torus
+            loc = ax.Location()
+            xy = (loc.X(), loc.Y())
+            # t = pi/2 - s*v (OCCT: r = R + rho cos v, z = zc + s*rho sin v)
+            s_ax = ax.Direction().Z()
+            v1, v2 = surf.FirstVParameter(), surf.LastVParameter()
+            if s_ax > 0:
+                t_span = (math.pi / 2 - v2, math.pi / 2 - v1)
+            else:
+                t_span = (math.pi / 2 + v1, math.pi / 2 + v2)
+            circles.append((loc.Z(), tor.MajorRadius(), tor.MinorRadius(), t_span, xy))
+        elif kind == GeomAbs_Cylinder:
+            ax = surf.Cylinder().Axis()
+            if abs(abs(ax.Direction().Z()) - 1.0) > _PARALLEL_TOL:
+                return None
+            loc = ax.Location()
+            xy = (loc.X(), loc.Y())
+        elif kind == GeomAbs_Cone:
+            ax = surf.Cone().Axis()
+            if abs(abs(ax.Direction().Z()) - 1.0) > _PARALLEL_TOL:
+                return None
+            loc = ax.Location()
+            xy = (loc.X(), loc.Y())
+        else:
+            return None
+        if axis_xy is None:
+            axis_xy = xy
+        elif math.hypot(xy[0] - axis_xy[0], xy[1] - axis_xy[1]) > 1e-6:
+            return None
+    if axis_xy is None:
+        return None
+
+    elements: list[_ProfileElement] = [
+        ("pt", (v.Z, math.hypot(v.X - axis_xy[0], v.Y - axis_xy[1])))
+        for v in shape.vertices()
+    ]
+    trims: dict[tuple, list[tuple[float, float]]] = {}
+    seen_keys: set[tuple] = set()
+    for zc, rc, rho, t_span, _xy in circles:
+        key = (round(zc, 6), round(rc, 6), round(rho, 6))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            elements.append(("circle", (zc, rc), rho, key))
+        trims.setdefault(key, []).append(t_span)
+        # span endpoints are the support outside the trim; give the sweep
+        # those points explicitly (vertices usually coincide, but faces
+        # split by booleans need not carry a vertex at every rim)
+        for a in t_span:
+            elements.append(("pt", (zc + rho * math.cos(a), rc + rho * math.sin(a))))
+    return axis_xy, elements, trims
+
+
+def _span_covered(lo: float, hi: float, spans: list[tuple[float, float]]) -> bool:
+    """Is the angular interval [lo, hi] covered by the union of spans
+    (each possibly wrapping), to 1e-6? Envelope arcs live in (0, pi)."""
+    two_pi = 2 * math.pi
+    segs: list[tuple[float, float]] = []
+    for a, b in spans:
+        if b - a >= two_pi - 1e-6:  # a full circle: covers anything
+            return True
+        a, b = a % two_pi, b % two_pi
+        if b < a - 1e-12:
+            segs += [(a, two_pi), (0.0, b)]
+        else:
+            segs.append((a, b))
+    need = [(lo + 1e-6, hi - 1e-6)] if hi - lo > 2e-6 else []
+    for a, b in sorted(segs):
+        need = [
+            piece
+            for nlo, nhi in need
+            for piece in ((nlo, min(nhi, a)), (max(nlo, b), nhi))
+            if piece[1] - piece[0] > 1e-9
+        ]
+    return not need
+
+
+def _chain_endpoints(chain: list[tuple]) -> tuple[Point2, Point2]:
+    def pt(piece: tuple, end: bool) -> Point2:
+        if piece[0] == "line":
+            return piece[2] if end else piece[1]
+        _, c, rho, hi, lo = piece[:5]
+        t = lo if end else hi
+        return (c[0] + rho * math.cos(t), c[1] + rho * math.sin(t))
+
+    return pt(chain[0], False), pt(chain[-1], True)
+
+
+def _chain_integrals(chain: list[tuple]) -> tuple[float, float, float]:
+    """(dz, integral r dz, integral r^2 dz) over the whole chain --
+    everything the Steiner cross-section volume formula needs, exactly."""
+    dz_total = int_r = int_r2 = 0.0
+    for piece in chain:
+        if piece[0] == "line":
+            (z1, r1), (z2, r2) = piece[1], piece[2]
+            dz = z2 - z1
+            dz_total += dz
+            int_r += dz * (r1 + r2) / 2
+            int_r2 += dz * (r1 * r1 + r1 * r2 + r2 * r2) / 3
+        else:
+            _, (_zc, rc), rho, hi, lo = piece[:5]
+            # z = zc + rho cos t, r = rc + rho sin t, t from hi down to lo
+            dz_total += rho * (math.cos(lo) - math.cos(hi))
+            int_r += _arc_f_r(rc, rho, hi) - _arc_f_r(rc, rho, lo)
+            int_r2 += _arc_f_r2(rc, rho, hi) - _arc_f_r2(rc, rho, lo)
+    return dz_total, int_r, int_r2
+
+
+def _arc_f_r(rc: float, rho: float, t: float) -> float:
+    """Antiderivative of r dz on an envelope arc, in the parameter t."""
+    return -rc * rho * math.cos(t) + rho * rho * (t - math.sin(t) * math.cos(t)) / 2
+
+
+def _arc_f_r2(rc: float, rho: float, t: float) -> float:
+    """Antiderivative of r^2 dz on an envelope arc, in the parameter t."""
+    return (
+        -rc * rc * rho * math.cos(t)
+        + rc * rho * rho * (t - math.sin(t) * math.cos(t))
+        + rho**3 * (-math.cos(t) + math.cos(t) ** 3 / 3)
+    )
+
+
+def _polygon_frame(
+    hull_pts: list[Point2],
+) -> tuple[list[tuple[int, int]], list[float]]:
+    """Directed edges and their outward-normal angles for the centers
+    polygon (CCW); a 2-point "polygon" gets both directed edges so the
+    generic vertex-wedge formula yields two 180-degree wedges, and a
+    single point gets no edges (one 360-degree wedge)."""
+    k = len(hull_pts)
+    if k >= 3:
+        edges_idx = [(i, (i + 1) % k) for i in range(k)]
+    elif k == 2:
+        edges_idx = [(0, 1), (1, 0)]
+    else:
+        edges_idx = []
+    normals = []
+    for i, j in edges_idx:
+        dx = hull_pts[j][0] - hull_pts[i][0]
+        dy = hull_pts[j][1] - hull_pts[i][1]
+        normals.append(math.atan2(-dx, dy))  # outward normal of a CCW edge
+    return edges_idx, normals
+
+
+def _fan_solid(hull_pts: list[Point2], chain: list[tuple]) -> Shape | None:
+    """Realize conv(centers) (+) conv(profile) face by face over the
+    normal fan and sew: every envelope piece extrudes along every polygon
+    edge (lines -> planes, arcs -> horizontal cylinders) and revolves
+    through every polygon vertex wedge (lines -> cones/cylinders, arcs ->
+    sphere/torus bands), plus flat caps. Sewn rather than fused: every
+    junction is tangent contact, where OCCT booleans are least reliable.
+    """
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid, BRepBuilderAPI_Sewing
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakePrism, BRepPrimAPI_MakeRevol
+    from OCP.gp import gp_Ax1, gp_Dir, gp_Pnt, gp_Vec
+    from OCP.ShapeFix import ShapeFix_Solid
+    from OCP.TopAbs import TopAbs_SHELL
+    from OCP.TopExp import TopExp_Explorer
+    from OCP.TopoDS import TopoDS
+
+    k = len(hull_pts)
+    edges_idx, normals = _polygon_frame(hull_pts)
+    two_pi = 2 * math.pi
+
+    def curve_edge(piece: tuple, cx: float, cy: float, theta: float) -> Edge:
+        ct, st = math.cos(theta), math.sin(theta)
+
+        def p3(zr: Point2) -> tuple[float, float, float]:
+            return (cx + zr[1] * ct, cy + zr[1] * st, zr[0])
+
+        if piece[0] == "line":
+            return Edge.make_line(p3(piece[1]), p3(piece[2]))
+        _, c, rho, hi, lo = piece[:5]
+
+        def at(t: float) -> tuple[float, float, float]:
+            return p3((c[0] + rho * math.cos(t), c[1] + rho * math.sin(t)))
+
+        return Edge.make_three_point_arc(at(hi), at((hi + lo) / 2), at(lo))
+
+    faces = []
+    for piece in chain:
+        for (i, j), na in zip(edges_idx, normals):
+            cx, cy = hull_pts[i]
+            edge = curve_edge(piece, cx, cy, na)
+            vec = gp_Vec(hull_pts[j][0] - cx, hull_pts[j][1] - cy, 0)
+            faces.append(BRepPrimAPI_MakePrism(edge.wrapped, vec).Shape())
+        for i in range(k):
+            cx, cy = hull_pts[i]
+            if k >= 2:
+                a_in = normals[(i - 1) % len(edges_idx)]
+                a_out = normals[i % len(edges_idx)] if k >= 3 else a_in + math.pi
+                sweep = (a_out - a_in) % two_pi
+            else:
+                a_in, sweep = 0.0, two_pi
+            edge = curve_edge(piece, cx, cy, a_in)
+            axis = gp_Ax1(gp_Pnt(cx, cy, 0), gp_Dir(0, 0, 1))
+            faces.append(BRepPrimAPI_MakeRevol(edge.wrapped, axis, sweep).Shape())
+
+    (z0, r0), (z1, r1) = _chain_endpoints(chain)
+    for z, r in ((z0, r0), (z1, r1)):
+        if r > 1e-7:
+            faces.append(_rounded_section(hull_pts, r, z).wrapped)
+        elif k >= 3:
+            pts3 = [(x, y, z) for x, y in hull_pts]
+            wire = Wire([Edge.make_line(pts3[i], pts3[(i + 1) % k]) for i in range(k)])
+            faces.append(Face(wire).wrapped)
+
+    sew = BRepBuilderAPI_Sewing(1e-5)
+    for f in faces:
+        sew.Add(f)
+    sew.Perform()
+    exp = TopExp_Explorer(sew.SewedShape(), TopAbs_SHELL)
+    if not exp.More():
+        return None
+    solid = BRepBuilderAPI_MakeSolid(TopoDS.Shell_s(exp.Current())).Solid()
+    fix = ShapeFix_Solid(solid)
+    fix.Perform()
+    return Compound.cast(fix.Solid())
+
+
+def _loft_solid(hull_pts: list[Point2], chain: list[tuple]) -> Shape | None:
+    """The proven phase-A construction for all-line profiles: ruled loft
+    of rounded-polygon sections at the envelope breakpoints."""
+    breakpoints: list[Point2] = [chain[0][1]]
+    for piece in chain:
+        breakpoints.append(piece[2])
+    if any(r < 1e-9 for _, r in breakpoints):
+        return None
+    sections = [_rounded_section(hull_pts, r, z) for z, r in breakpoints]
+    return _bd_loft(sections, ruled=True)
+
+
+def _chains_match(a: list[tuple], b: list[tuple]) -> bool:
+    if len(a) != len(b):
+        return False
+    for pa, pb in zip(a, b):
+        if pa[0] != pb[0]:
+            return False
+        va = [
+            x
+            for part in pa[1:5]
+            for x in (part if isinstance(part, tuple) else (part,))
+            if isinstance(x, float)
+        ]
+        vb = [
+            x
+            for part in pb[1:5]
+            for x in (part if isinstance(part, tuple) else (part,))
+            if isinstance(x, float)
+        ]
+        if len(va) != len(vb) or not np.allclose(va, vb, rtol=1e-6, atol=1e-7):
+            return False
+    return True
+
+
+def _hull_vertical_translates(shapes: list[Shape]) -> Shape | None:
+    classified = [_profile_elements(s) for s in shapes]
     if any(c is None for c in classified):
         return None
 
-    groups: dict[tuple[float, float], tuple[Point2, list[Point2]]] = {}
-    for center, points in classified:  # type: ignore[misc]
+    groups: dict[tuple[float, float], tuple[Point2, list, dict]] = {}
+    for center, elements, trims in classified:  # type: ignore[misc]
         key = (round(center[0], 6), round(center[1], 6))
         if key in groups:
-            groups[key][1].extend(points)
+            groups[key][1].extend(elements)
+            for tk, spans in trims.items():
+                groups[key][2].setdefault(tk, []).extend(spans)
         else:
-            groups[key] = (center, list(points))
+            groups[key] = (center, list(elements), dict(trims))
 
-    chains = [_upper_chain(points) for _, points in groups.values()]
-    first = np.asarray(chains[0])
-    for other in chains[1:]:
-        if len(other) != len(first) or not np.allclose(
-            np.asarray(other), first, rtol=1e-6, atol=1e-9
-        ):
-            return None
+    chains = []
+    for _, elements, trims in groups.values():
+        chain = _upper_envelope(elements, trims)
+        # every arc the envelope used must lie on boundary the child has
+        for piece in chain:
+            if piece[0] == "arc" and not _span_covered(
+                piece[4], piece[3], trims.get(piece[5], [])
+            ):
+                return None
+        chains.append(chain)
     chain = chains[0]
-    if len(chain) < 2 or any(r < 1e-9 for _, r in chain):
+    for other in chains[1:]:
+        if not _chains_match(chain, other):
+            return None
+    if not chain:
+        return None
+    (z0, _r0), (z1, _r1) = _chain_endpoints(chain)
+    if z1 - z0 < 1e-9:
         return None
 
-    centers = [center for center, _ in groups.values()]
+    centers = [center for center, _, _ in groups.values()]
     try:
         hull_pts = _centers_hull2d(centers)
-        sections = [_rounded_section(hull_pts, r, z) for z, r in chain]
-        solid = _bd_loft(sections, ruled=True)
+        if all(p[0] == "line" for p in chain):
+            solid = _loft_solid(hull_pts, chain)
+        else:
+            solid = _fan_solid(hull_pts, chain)
     except Exception:  # noqa: BLE001
         return None
     if solid is None or not solid.is_valid:
         return None
 
-    # Exact volume: sum of integral(A0 + P0*r(z) + pi*r(z)^2) dz with r
-    # linear on each envelope segment.
+    # Exact volume: integral of the Steiner cross-section area
+    # A0 + P0*r(z) + pi*r(z)^2 over the envelope, arcs included.
     if len(hull_pts) < 3:
         area = 0.0
         perimeter = 2 * math.dist(hull_pts[0], hull_pts[-1])
@@ -780,17 +1150,94 @@ def _hull_of_revolved_translates(shapes: list[Shape]) -> Shape | None:
             )
         )
         perimeter = sum(math.dist(hull_pts[i], hull_pts[(i + 1) % k]) for i in range(k))
-    exact = 0.0
-    for (z1, r1), (z2, r2) in pairwise(chain):
-        dz = z2 - z1
-        exact += dz * (
-            area
-            + perimeter * (r1 + r2) / 2
-            + math.pi * (r1 * r1 + r1 * r2 + r2 * r2) / 3
-        )
+    dz, int_r, int_r2 = _chain_integrals(chain)
+    exact = area * dz + perimeter * int_r + math.pi * int_r2
     if not math.isclose(solid.volume, exact, rel_tol=1e-6):
         return None
     return solid
+
+
+def _hull_of_revolved_translates(shapes: list[Shape]) -> Shape | None:
+    """hull() of one revolution profile repeated by translation
+    perpendicular to a shared axis -- the ``hull() cornercopy(...)`` idiom
+    (tapered pads, stacked bevels, filleted cavity posts, turned legs).
+
+    hull(identical translates of X) == conv(centers) (+) conv(X); see the
+    phase-B block comment above for how the normal fan realizes it. The
+    axis may point anywhere as long as every child shares it: the problem
+    is conjugated to vertical (rotate, solve, rotate back), which is all
+    the generality a common axis needs. Line-only profiles keep the
+    proven ruled-loft construction; profiles with arcs (sphere/torus
+    faces) go through the sewn fan construction. Every result is
+    self-checked against the closed-form Steiner volume integral and
+    declines on mismatch.
+    """
+    from build123d import Axis as _Axis
+
+    dirs = []
+    for s in shapes:
+        d = _child_axis_direction(s)
+        if d is False:
+            return None
+        if d is not None:
+            dirs.append(d)
+    if dirs:
+        d0 = dirs[0]
+        for d in dirs[1:]:
+            if abs(abs(d0[0] * d[0] + d0[1] * d[1] + d0[2] * d[2]) - 1.0) > 1e-9:
+                return None
+    else:
+        d0 = (0.0, 0.0, 1.0)
+
+    if abs(abs(d0[2]) - 1.0) < 1e-12:
+        return _hull_vertical_translates(shapes)
+
+    # conjugate: rotate the shared axis onto +Z, solve, rotate back
+    ax = (d0[1], -d0[0], 0.0)  # d0 x Z: rotating about it takes d0 to +Z
+    norm = math.hypot(ax[0], ax[1])
+    axis = _Axis((0, 0, 0), (ax[0] / norm, ax[1] / norm, 0.0))
+    angle = math.degrees(math.acos(max(-1.0, min(1.0, d0[2]))))
+    rotated = [s.rotate(axis, angle) for s in shapes]
+    result = _hull_vertical_translates(rotated)
+    if result is None:
+        return None
+    return result.rotate(axis, -angle)
+
+
+def _child_axis_direction(shape: Shape):
+    """The unit axis direction shared by a child's cylinder/cone/torus
+    faces: a tuple; None if nothing constrains it (spheres and planes
+    only); False if faces disagree or an unsupported surface appears."""
+    if not shape.solids():
+        return False
+    direction = None
+    for f in shape.faces():
+        if f.geom_type == GeomType.PLANE:
+            continue
+        surf = BRepAdaptor_Surface(f.wrapped)
+        kind = surf.GetType()
+        if kind == GeomAbs_Sphere:
+            continue
+        if kind == GeomAbs_Cylinder:
+            d = surf.Cylinder().Axis().Direction()
+        elif kind == GeomAbs_Cone:
+            d = surf.Cone().Axis().Direction()
+        elif kind == GeomAbs_Torus:
+            d = surf.Torus().Axis().Direction()
+        else:
+            return False
+        v = (d.X(), d.Y(), d.Z())
+        if direction is None:
+            direction = v
+        elif (
+            abs(
+                abs(direction[0] * v[0] + direction[1] * v[1] + direction[2] * v[2])
+                - 1.0
+            )
+            > 1e-9
+        ):
+            return False
+    return direction
 
 
 def _component_shapes(shapes: list[Shape]) -> list[Shape]:

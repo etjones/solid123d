@@ -7,6 +7,7 @@ pin the solid123d-facing behavior and the closed forms.
 """
 
 import math
+from collections import Counter
 
 import pytest
 from build123d import GeomType
@@ -14,7 +15,9 @@ from build123d import GeomType
 import solid123d as s
 
 
-def _steiner(volume: float, area: float, edges: list[tuple[float, float]], r: float) -> float:
+def _steiner(
+    volume: float, area: float, edges: list[tuple[float, float]], r: float
+) -> float:
     return (
         volume
         + area * r
@@ -94,7 +97,9 @@ class TestHullCylinders:
         assert shape.volume == pytest.approx(expected, rel=1e-9)
 
 
-def _slab(area: float, perim: float, z1: float, r1: float, z2: float, r2: float) -> float:
+def _slab(
+    area: float, perim: float, z1: float, r1: float, z2: float, r2: float
+) -> float:
     """integral of the 2D Steiner area A0 + P0*r(z) + pi*r(z)^2 over one
     linear envelope segment -- the exact volume of a rounded-polygon
     frustum slab. Derived independently of the implementation's own check
@@ -102,9 +107,7 @@ def _slab(area: float, perim: float, z1: float, r1: float, z2: float, r2: float)
     """
     dz = z2 - z1
     return dz * (
-        area
-        + perim * (r1 + r2) / 2
-        + math.pi * (r1 * r1 + r1 * r2 + r2 * r2) / 3
+        area + perim * (r1 + r2) / 2 + math.pi * (r1 * r1 + r1 * r2 + r2 * r2) / 3
     )
 
 
@@ -113,14 +116,14 @@ class TestHullRevolvedTranslates:
     conv(centers) (+) conv(child), the ``hull() cornercopy(...)`` idiom."""
 
     def test_four_cones_make_a_tapered_rounded_box(self):
-        shape = s.hull()(*[
-            s.translate([x, y, 0])(s.cylinder(r1=2, r2=5, h=3))
-            for x in (-10, 10)
-            for y in (-10, 10)
-        ])
-        assert shape.volume == pytest.approx(
-            _slab(400, 80, 0, 2, 3, 5), rel=1e-6
+        shape = s.hull()(
+            *[
+                s.translate([x, y, 0])(s.cylinder(r1=2, r2=5, h=3))
+                for x in (-10, 10)
+                for y in (-10, 10)
+            ]
         )
+        assert shape.volume == pytest.approx(_slab(400, 80, 0, 2, 3, 5), rel=1e-6)
         from collections import Counter
 
         kinds = Counter(f.geom_type for f in shape.faces())
@@ -137,9 +140,9 @@ class TestHullRevolvedTranslates:
                 s.translate([0, 0, 0.8])(s.cylinder(r=1.6, h=4.5)),
             )
 
-        shape = s.hull()(*[
-            s.translate([x, y, 0])(leg()) for x in (-17, 17) for y in (-17, 17)
-        ])
+        shape = s.hull()(
+            *[s.translate([x, y, 0])(leg()) for x in (-17, 17) for y in (-17, 17)]
+        )
         expected = _slab(1156, 136, 0, 0.8, 0.8, 1.6) + _slab(
             1156, 136, 0.8, 1.6, 5.3, 1.6
         )
@@ -169,18 +172,26 @@ class TestHullRevolvedTranslates:
             points=[[0, 0], [2.5, 0], [2.5, 1], [1.2, 2], [1.2, 28], [2.0, 30], [0, 30]]
         )
         leg = s.rotate_extrude()(profile)
-        shape = s.hull()(*[
-            s.translate([x, y, 0])(leg) for x in (0, 40) for y in (0, 40)
-        ])
-        expected = _slab(1600, 160, 0, 2.5, 1, 2.5) + _slab(
-            1600, 160, 1, 2.5, 30, 2.0
+        shape = s.hull()(
+            *[s.translate([x, y, 0])(leg) for x in (0, 40) for y in (0, 40)]
         )
+        expected = _slab(1600, 160, 0, 2.5, 1, 2.5) + _slab(1600, 160, 1, 2.5, 30, 2.0)
         assert shape.volume == pytest.approx(expected, rel=1e-6)
 
-    def test_tilted_children_decline(self):
+    def test_tilted_shared_axis_now_succeeds(self):
+        """Phase B: a shared non-vertical axis conjugates to vertical.
+        (This declined in phase A.) Translation is perpendicular to the
+        tilt axis (X), so profiles stay identical across centers."""
         leg = s.rotate([30, 0, 0])(s.cylinder(r1=2, r2=4, h=3))
+        shape = s.hull()(leg, s.translate([10, 0, 0])(leg))
+        assert shape.volume == pytest.approx(_slab(0, 20, 0, 2, 3, 4), rel=1e-6)
+
+    def test_mixed_axes_decline(self):
         with pytest.raises(NotImplementedError):
-            s.hull()(leg, s.translate([10, 0, 0])(leg))
+            s.hull()(
+                s.rotate([30, 0, 0])(s.cylinder(r1=2, r2=4, h=3)),
+                s.translate([10, 0, 0])(s.cylinder(r1=2, r2=4, h=3)),
+            )
 
     def test_mismatched_profiles_decline(self):
         with pytest.raises(NotImplementedError):
@@ -195,6 +206,120 @@ class TestHullRevolvedTranslates:
         cone = s.cylinder(r1=2, r2=0, h=3)
         with pytest.raises(NotImplementedError):
             s.hull()(cone, s.translate([10, 0, 0])(cone))
+
+
+class TestHullArcProfiles:
+    """Phase B: profiles with sphere/torus arcs, and any shared axis.
+    Volumes check against independent closed forms: for the half-circle
+    arc pieces here, integral(r)dz = rc*2rho + pi*rho^2/2 per quarter, and
+    integral(r^2)dz uses integral(rho^2 - u^2)du = 4 rho^3 / 3."""
+
+    def _posts_volume(self) -> float:
+        # square 30x30 of posts: cylinder r=6 h=20 + hemisphere cap
+        a0, p0 = 900.0, 120.0
+        int_r = 6 * 20 + math.pi * 36 / 4
+        int_r2 = 36 * 20 + (36 * 6 - 6**3 / 3)
+        return a0 * 26 + p0 * int_r + math.pi * int_r2
+
+    def test_sphere_capped_posts(self):
+        def post():
+            return s.union()(
+                s.cylinder(r=6, h=20), s.translate([0, 0, 20])(s.sphere(6))
+            )
+
+        shape = s.hull()(
+            *[s.translate([x, y, 0])(post()) for x in (-15, 15) for y in (-15, 15)]
+        )
+        assert shape.volume == pytest.approx(self._posts_volume(), rel=1e-6)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds[GeomType.SPHERE] == 4  # corner bands
+        assert kinds[GeomType.CYLINDER] == 8  # 4 walls + 4 edge rounds
+
+    def test_four_tori(self):
+        torus = s.rotate_extrude()(s.translate([5, 0])(s.circle(2)))
+        shape = s.hull()(
+            *[s.translate([x, y, 0])(torus) for x in (-12, 12) for y in (-12, 12)]
+        )
+        a0, p0, rc, rho = 576.0, 96.0, 5.0, 2.0
+        int_r = rc * 2 * rho + math.pi * rho * rho / 2
+        int_r2 = rc * rc * 2 * rho + math.pi * rho * rho * rc + 4 * rho**3 / 3
+        expected = a0 * 2 * rho + p0 * int_r + math.pi * int_r2
+        assert shape.volume == pytest.approx(expected, rel=1e-6)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds[GeomType.TORUS] == 4
+
+    def test_single_torus_is_a_filled_rounded_disk(self):
+        torus = s.rotate_extrude()(s.translate([5, 0])(s.circle(2)))
+        shape = s.hull()(torus)
+        rc, rho = 5.0, 2.0
+        int_r2 = rc * rc * 2 * rho + math.pi * rho * rho * rc + 4 * rho**3 / 3
+        assert shape.volume == pytest.approx(math.pi * int_r2, rel=1e-6)
+
+    def test_shared_tilted_axis_conjugates(self):
+        """The axis may point anywhere as long as every child shares it:
+        rotate-to-vertical, solve, rotate back must reproduce the
+        vertical volume exactly."""
+
+        def post():
+            return s.union()(
+                s.cylinder(r=6, h=20), s.translate([0, 0, 20])(s.sphere(6))
+            )
+
+        shape = s.hull()(
+            *[
+                s.rotate([90, 0, 30])(s.translate([x, y, 0])(post()))
+                for x in (-15, 15)
+                for y in (-15, 15)
+            ]
+        )
+        assert shape.volume == pytest.approx(self._posts_volume(), rel=1e-6)
+
+    def test_gridfinity_cavity_idiom(self):
+        """The module_gridfinity_cup.scad:1341 pattern: hull() cornercopy
+        of roundedCylinders (cylinder + torus floor fillet)."""
+
+        def rounded_cyl():
+            return s.union()(
+                s.translate([0, 0, 2])(s.cylinder(r=8, h=18)),
+                s.rotate_extrude()(s.translate([6, 2])(s.circle(2))),
+                s.cylinder(r=6, h=2),
+            )
+
+        shape = s.hull()(
+            *[
+                s.translate([x, y, 0])(rounded_cyl())
+                for x in (-17, 17)
+                for y in (-17, 17)
+            ]
+        )
+        a0, p0 = 34.0 * 34, 4 * 34.0
+        # z in [0,2]: quarter-torus fillet rc=6 rho=2; z in [2,20]: wall r=8
+        int_r = (6 * 2 + math.pi * 4 / 4) + 8 * 18
+        int_r2 = (36 * 2 + math.pi * 4 * 6 / 2 + (4 * 2 - 2**3 / 3)) + 64 * 18
+        expected = a0 * 20 + p0 * int_r + math.pi * int_r2
+        assert shape.volume == pytest.approx(expected, rel=1e-6)
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds[GeomType.TORUS] == 4
+
+    def test_truncated_sphere_uses_only_existing_boundary(self):
+        """A spherical cap with its flat side UP: the envelope may use the
+        sphere arc only over the latitudes the face actually has, ending
+        at the rim -- the honest (trimmed) support function makes this the
+        correct hull rather than a decline. Volume: stadium cross-section
+        2*d*r(z) + pi*r(z)^2 with r(z) = sqrt(25 - z^2) over z in [-5, -1].
+        """
+        cap = s.difference()(
+            s.sphere(5), s.translate([0, 0, 5])(s.cube(12, center=True))
+        )
+        shape = s.hull()(cap, s.translate([14, 0, 0])(cap))
+
+        def int_sqrt(z: float) -> float:  # antiderivative of sqrt(25 - z^2)
+            return z / 2 * math.sqrt(25 - z * z) + 12.5 * math.asin(z / 5)
+
+        int_r = int_sqrt(-1) - int_sqrt(-5)
+        int_r2 = 25 * 4 - ((-1) ** 3 - (-5) ** 3) / 3
+        expected = 2 * 14 * int_r + math.pi * int_r2
+        assert shape.volume == pytest.approx(expected, rel=1e-6)
 
 
 class TestHull2D:
@@ -284,7 +409,9 @@ class TestHullBasics:
 class TestMinkowski:
     def test_cube_plus_sphere_matches_steiner(self):
         shape = s.minkowski()(s.cube([20, 15, 10], center=True), s.sphere(3))
-        edges = [(20, math.pi / 2)] * 4 + [(15, math.pi / 2)] * 4 + [(10, math.pi / 2)] * 4
+        edges = (
+            [(20, math.pi / 2)] * 4 + [(15, math.pi / 2)] * 4 + [(10, math.pi / 2)] * 4
+        )
         expected = _steiner(3000, 2 * (300 + 200 + 150), edges, 3)
         assert shape.volume == pytest.approx(expected, rel=1e-9)
 
