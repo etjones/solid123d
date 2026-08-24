@@ -14,6 +14,12 @@
 - All-polyhedral children: exactly the convex hull of their combined
   vertices, via build123d's ConvexPolyhedron. Covers cubes, polyhedron()s,
   extruded polygons, and matrix-transformed anything-planar.
+- Identical vertical-axis revolution solids (cylinder/cone faces) repeated
+  by translation in the XY plane -- the ``hull() cornercopy(...)`` idiom:
+  hull(identical translates of X) == conv(centers) (+) conv(X), a Minkowski
+  sum realized as a ruled loft of rounded-polygon sections. Covers unequal
+  cones, tapered pads, and stacked-cylinder bevels (Gridfinity's entire
+  base system). See _hull_of_revolved_translates.
 
 ``analytic_hull`` returns None for anything else -- notably three or more
 non-collinear spheres of unequal radii, whose hull needs tritangent planes
@@ -29,6 +35,7 @@ already been resolved.
 """
 
 import math
+from itertools import pairwise
 
 import numpy as np
 from build123d import (
@@ -56,10 +63,13 @@ from build123d import (
     make_face,
 )
 from build123d import (
+    loft as _bd_loft,
+)
+from build123d import (
     offset as _bd_offset,
 )
 from OCP.BRepAdaptor import BRepAdaptor_Surface
-from OCP.GeomAbs import GeomAbs_Cylinder, GeomAbs_Sphere
+from OCP.GeomAbs import GeomAbs_Cone, GeomAbs_Cylinder, GeomAbs_Sphere
 from scipy.spatial import ConvexHull
 
 from .primitives import polyhedron
@@ -578,6 +588,211 @@ def _hull_of_polygons(shapes: list[Shape]) -> Face | None:
     return result if result.is_valid else None
 
 
+def _vertical_revolution_profile(
+    shape: Shape,
+) -> tuple[Point2, list[Point2]] | None:
+    """((cx, cy), [(z, r), ...]) if shape is a solid of revolution about a
+    vertical axis built from cylinder/cone side faces and horizontal planes.
+
+    The profile points are simply the shape's vertices as (z, radial
+    distance from the axis): for line-profile revolution solids every
+    silhouette extreme lies on a rim, and rims contribute their vertices.
+    Spheres and tori are deliberately out (their silhouettes are not
+    determined by vertices); they classify as None and the rung declines.
+    """
+    if not shape.solids():
+        return None
+    axis_xy: Point2 | None = None
+    for f in shape.faces():
+        if f.geom_type == GeomType.PLANE:
+            n = f.normal_at()
+            if abs(abs(n.Z) - 1.0) > _PARALLEL_TOL:
+                return None
+            continue
+        surf = BRepAdaptor_Surface(f.wrapped)
+        kind = surf.GetType()
+        if kind == GeomAbs_Cylinder:
+            ax = surf.Cylinder().Axis()
+        elif kind == GeomAbs_Cone:
+            ax = surf.Cone().Axis()
+        else:
+            return None
+        if abs(abs(ax.Direction().Z()) - 1.0) > _PARALLEL_TOL:
+            return None
+        loc = ax.Location()
+        xy = (loc.X(), loc.Y())
+        if axis_xy is None:
+            axis_xy = xy
+        elif math.hypot(xy[0] - axis_xy[0], xy[1] - axis_xy[1]) > 1e-6:
+            return None
+    if axis_xy is None:
+        return None
+    points = [
+        (v.Z, math.hypot(v.X - axis_xy[0], v.Y - axis_xy[1])) for v in shape.vertices()
+    ]
+    return axis_xy, points
+
+
+def _upper_chain(points: list[Point2]) -> list[Point2]:
+    """The upper concave envelope of (z, r) points: r as a function of z on
+    the boundary of their 2D convex hull. This IS the hull's silhouette
+    radius: combining boundary circles (z1, r1) and (z2, r2) at the same
+    angular position yields radius lerp(r1, r2) at z lerp(z1, z2), so the
+    max radius at each z is the concave envelope and nothing more.
+    """
+    best: dict[float, float] = {}
+    for z, r in points:
+        zk = round(z, 9)
+        best[zk] = max(best.get(zk, -math.inf), r)
+    pts = sorted(best.items())
+    chain: list[Point2] = []
+    for p in pts:
+        while len(chain) >= 2:
+            (z1, r1), (z2, r2) = chain[-2], chain[-1]
+            if (z2 - z1) * (p[1] - r1) - (r2 - r1) * (p[0] - z1) >= 0:
+                chain.pop()
+            else:
+                break
+        chain.append(p)
+    return chain
+
+
+def _centers_hull2d(centers: list[Point2]) -> list[Point2]:
+    """CCW extreme points of the centers; 1 or 2 points for the degenerate
+    coincident/collinear layouts (which _rounded_section builds directly)."""
+    span, a, b = _pairwise_extremes([(c[0], c[1], 0.0) for c in centers])
+    if span < 1e-9:
+        return [centers[0]]
+    if _is_collinear([(c[0], c[1], 0.0) for c in centers], a, b, span):
+        return [(a[0], a[1]), (b[0], b[1])]
+    hull = ConvexHull(np.asarray(centers))
+    return [tuple(float(x) for x in hull.points[i]) for i in hull.vertices]
+
+
+def _rounded_section(hull_pts: list[Point2], r: float, z: float) -> Shape:
+    """The rounded polygon (2D hull of hull_pts offset by r) as a Face at
+    height z, built as one deterministic wire so every section of a loft
+    has identical edge structure and orientation.
+    """
+    if len(hull_pts) == 1:
+        c = hull_pts[0]
+        return Pos(c[0], c[1], z) * Circle(r)
+    if len(hull_pts) == 2:
+        return Pos(0, 0, z) * _stadium2d(hull_pts[0], hull_pts[1], r)
+
+    k = len(hull_pts)
+    normals: list[Point2] = []
+    for i in range(k):
+        ax, ay = hull_pts[i]
+        bx, by = hull_pts[(i + 1) % k]
+        d = math.dist((ax, ay), (bx, by))
+        # CCW polygon: outward normal of edge (dx, dy) is (dy, -dx)
+        normals.append(((by - ay) / d, -(bx - ax) / d))
+    edges = []
+    for i in range(k):
+        ax, ay = hull_pts[i]
+        bx, by = hull_pts[(i + 1) % k]
+        nx, ny = normals[i]
+        edges.append(
+            Edge.make_line((ax + r * nx, ay + r * ny), (bx + r * nx, by + r * ny))
+        )
+        # corner arc at b, tangent to the incoming offset edge
+        ux, uy = (bx - ax), (by - ay)
+        d = math.hypot(ux, uy)
+        n2x, n2y = normals[(i + 1) % k]
+        edges.append(
+            Edge.make_tangent_arc(
+                (bx + r * nx, by + r * ny),
+                (ux / d, uy / d, 0),
+                (bx + r * n2x, by + r * n2y),
+            )
+        )
+    return Pos(0, 0, z) * Face(Wire(edges))
+
+
+def _hull_of_revolved_translates(shapes: list[Shape]) -> Shape | None:
+    """hull() of one vertical-axis revolution profile repeated by XY
+    translation -- the ``hull() cornercopy(...)`` idiom (tapered pads,
+    stacked-cylinder bevels, turned legs with straight tapers).
+
+    The identity doing the work: for identical translates,
+    hull(union of X + c_i) == conv({c_i}) (+) conv(X). conv(X) for a
+    vertical revolution solid is the revolution of the upper concave
+    envelope of its (z, r) profile, so the sum's cross-section at height z
+    is the centers' 2D hull offset by the envelope radius r(z) -- built
+    here as a ruled loft of rounded-polygon sections at the envelope's
+    breakpoints (planes and cones between sections; exact, since a ruled
+    surface between concentric equal-angle arcs is a cone).
+
+    A center may carry several component solids (a disjoint stacked bevel
+    arrives as two cylinders per corner); their profile points pool before
+    the envelope. Declines when any child isn't a vertical cylinder/cone
+    revolution, when centers' profiles differ, or when the envelope
+    touches r=0 (apex sections need a vertex loft this doesn't build).
+    The result is self-checked against the closed-form volume
+    integral of the 2D Steiner formula A(r) = A0 + P0*r + pi*r^2.
+    """
+    classified = [_vertical_revolution_profile(s) for s in shapes]
+    if any(c is None for c in classified):
+        return None
+
+    groups: dict[tuple[float, float], tuple[Point2, list[Point2]]] = {}
+    for center, points in classified:  # type: ignore[misc]
+        key = (round(center[0], 6), round(center[1], 6))
+        if key in groups:
+            groups[key][1].extend(points)
+        else:
+            groups[key] = (center, list(points))
+
+    chains = [_upper_chain(points) for _, points in groups.values()]
+    first = np.asarray(chains[0])
+    for other in chains[1:]:
+        if len(other) != len(first) or not np.allclose(
+            np.asarray(other), first, rtol=1e-6, atol=1e-9
+        ):
+            return None
+    chain = chains[0]
+    if len(chain) < 2 or any(r < 1e-9 for _, r in chain):
+        return None
+
+    centers = [center for center, _ in groups.values()]
+    try:
+        hull_pts = _centers_hull2d(centers)
+        sections = [_rounded_section(hull_pts, r, z) for z, r in chain]
+        solid = _bd_loft(sections, ruled=True)
+    except Exception:  # noqa: BLE001
+        return None
+    if solid is None or not solid.is_valid:
+        return None
+
+    # Exact volume: sum of integral(A0 + P0*r(z) + pi*r(z)^2) dz with r
+    # linear on each envelope segment.
+    if len(hull_pts) < 3:
+        area = 0.0
+        perimeter = 2 * math.dist(hull_pts[0], hull_pts[-1])
+    else:
+        k = len(hull_pts)
+        area = 0.5 * abs(
+            sum(
+                hull_pts[i][0] * hull_pts[(i + 1) % k][1]
+                - hull_pts[(i + 1) % k][0] * hull_pts[i][1]
+                for i in range(k)
+            )
+        )
+        perimeter = sum(math.dist(hull_pts[i], hull_pts[(i + 1) % k]) for i in range(k))
+    exact = 0.0
+    for (z1, r1), (z2, r2) in pairwise(chain):
+        dz = z2 - z1
+        exact += dz * (
+            area
+            + perimeter * (r1 + r2) / 2
+            + math.pi * (r1 * r1 + r1 * r2 + r2 * r2) / 3
+        )
+    if not math.isclose(solid.volume, exact, rel_tol=1e-6):
+        return None
+    return solid
+
+
 def _component_shapes(shapes: list[Shape]) -> list[Shape]:
     """Explode each input into its independent component solids (or faces,
     for 2D input) before classification.
@@ -619,6 +834,9 @@ def analytic_hull(shapes: list[Shape]) -> Shape | None:
     if result is not None:
         return result
     result = _hull_of_cylinders(shapes)
+    if result is not None:
+        return result
+    result = _hull_of_revolved_translates(shapes)
     if result is not None:
         return result
     result = _hull_of_two_circles(shapes)

@@ -94,6 +94,109 @@ class TestHullCylinders:
         assert shape.volume == pytest.approx(expected, rel=1e-9)
 
 
+def _slab(area: float, perim: float, z1: float, r1: float, z2: float, r2: float) -> float:
+    """integral of the 2D Steiner area A0 + P0*r(z) + pi*r(z)^2 over one
+    linear envelope segment -- the exact volume of a rounded-polygon
+    frustum slab. Derived independently of the implementation's own check
+    (same mathematics, but the test would catch a sign/term slip in either).
+    """
+    dz = z2 - z1
+    return dz * (
+        area
+        + perim * (r1 + r2) / 2
+        + math.pi * (r1 * r1 + r1 * r2 + r2 * r2) / 3
+    )
+
+
+class TestHullRevolvedTranslates:
+    """hull() of one vertical revolution profile repeated by XY translation:
+    conv(centers) (+) conv(child), the ``hull() cornercopy(...)`` idiom."""
+
+    def test_four_cones_make_a_tapered_rounded_box(self):
+        shape = s.hull()(*[
+            s.translate([x, y, 0])(s.cylinder(r1=2, r2=5, h=3))
+            for x in (-10, 10)
+            for y in (-10, 10)
+        ])
+        assert shape.volume == pytest.approx(
+            _slab(400, 80, 0, 2, 3, 5), rel=1e-6
+        )
+        from collections import Counter
+
+        kinds = Counter(f.geom_type for f in shape.faces())
+        assert kinds == {GeomType.PLANE: 6, GeomType.CONE: 4}
+
+    def test_gridfinity_stepped_bevel(self):
+        """The pad_oversize bottom bevel: two disjoint coaxial cylinders per
+        corner; the envelope must bridge the concave step (the short fat
+        cylinder's top rim at (0.1, 0.8) falls inside the hull)."""
+
+        def leg():
+            return s.union()(
+                s.cylinder(r=0.8, h=0.1),
+                s.translate([0, 0, 0.8])(s.cylinder(r=1.6, h=4.5)),
+            )
+
+        shape = s.hull()(*[
+            s.translate([x, y, 0])(leg()) for x in (-17, 17) for y in (-17, 17)
+        ])
+        expected = _slab(1156, 136, 0, 0.8, 0.8, 1.6) + _slab(
+            1156, 136, 0.8, 1.6, 5.3, 1.6
+        )
+        assert shape.volume == pytest.approx(expected, rel=1e-6)
+
+    def test_two_centers_loft_stadium_sections(self):
+        shape = s.hull()(
+            s.cylinder(r1=2, r2=5, h=3),
+            s.translate([12, 0, 0])(s.cylinder(r1=2, r2=5, h=3)),
+        )
+        assert shape.volume == pytest.approx(_slab(0, 24, 0, 2, 3, 5), rel=1e-6)
+
+    def test_single_stack_is_its_own_convex_hull(self):
+        shape = s.hull()(
+            s.union()(
+                s.cylinder(r=3, h=1),
+                s.translate([0, 0, 4])(s.cylinder(r=1, h=1)),
+            )
+        )
+        expected = _slab(0, 0, 0, 3, 1, 3) + _slab(0, 0, 1, 3, 5, 1)
+        assert shape.volume == pytest.approx(expected, rel=1e-6)
+
+    def test_four_turned_table_legs(self):
+        """rotate_extrude legs with a concave waist: envelope keeps the
+        (1, 2.5) shoulder and bridges straight to the (30, 2.0) top."""
+        profile = s.polygon(
+            points=[[0, 0], [2.5, 0], [2.5, 1], [1.2, 2], [1.2, 28], [2.0, 30], [0, 30]]
+        )
+        leg = s.rotate_extrude()(profile)
+        shape = s.hull()(*[
+            s.translate([x, y, 0])(leg) for x in (0, 40) for y in (0, 40)
+        ])
+        expected = _slab(1600, 160, 0, 2.5, 1, 2.5) + _slab(
+            1600, 160, 1, 2.5, 30, 2.0
+        )
+        assert shape.volume == pytest.approx(expected, rel=1e-6)
+
+    def test_tilted_children_decline(self):
+        leg = s.rotate([30, 0, 0])(s.cylinder(r1=2, r2=4, h=3))
+        with pytest.raises(NotImplementedError):
+            s.hull()(leg, s.translate([10, 0, 0])(leg))
+
+    def test_mismatched_profiles_decline(self):
+        with pytest.raises(NotImplementedError):
+            s.hull()(
+                s.cylinder(r1=2, r2=5, h=3),
+                s.translate([12, 0, 0])(s.cylinder(r1=2, r2=4, h=3)),
+            )
+
+    def test_apex_cones_decline(self):
+        """r2=0 puts the envelope at radius zero: an apex section, which
+        the ruled loft doesn't model. Must decline cleanly, not crash."""
+        cone = s.cylinder(r1=2, r2=0, h=3)
+        with pytest.raises(NotImplementedError):
+            s.hull()(cone, s.translate([10, 0, 0])(cone))
+
+
 class TestHull2D:
     def test_keyhole_of_two_circles(self):
         ra, rb, d = 3.0, 5.0, 10.0
