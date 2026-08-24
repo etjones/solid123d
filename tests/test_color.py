@@ -45,7 +45,10 @@ class TestColorGroups:
         )
         assert len(u.children) == 2
         (c1, c2) = u.children
-        assert (str(c1.color), c1.label) == ("Color: (1.0, 0.0, 0.0, 1.0) is 'RED'", "red")
+        assert (str(c1.color), c1.label) == (
+            "Color: (1.0, 0.0, 0.0, 1.0) is 'RED'",
+            "red",
+        )
         assert c2.label == "blue"
         assert u.volume == pytest.approx(1000 + 125, rel=1e-9)
 

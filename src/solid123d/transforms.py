@@ -61,9 +61,7 @@ def mirror(v: Sequence[float]) -> Applier:
     normal = vec3(v)
 
     def apply(*children: Shape) -> Shape:
-        return _bd_mirror(
-            group(children), about=Plane(origin=(0, 0, 0), z_dir=normal)
-        )
+        return _bd_mirror(group(children), about=Plane(origin=(0, 0, 0), z_dir=normal))
 
     return apply
 
@@ -78,17 +76,11 @@ def resize(
         shape = group(children)
         bbox = shape.bounding_box()
         current = (bbox.size.X, bbox.size.Y, bbox.size.Z)
-        autos = (
-            (auto, auto, auto) if isinstance(auto, bool) else tuple(auto)
-        )
-        factors = [
-            t / c if t != 0 and c != 0 else 0.0
-            for t, c in zip(target, current)
-        ]
+        autos = (auto, auto, auto) if isinstance(auto, bool) else tuple(auto)
+        factors = [t / c if t != 0 and c != 0 else 0.0 for t, c in zip(target, current)]
         first = next((f for f in factors if f != 0), 1.0)
         resolved = tuple(
-            f if f != 0 else (first if autos[i] else 1.0)
-            for i, f in enumerate(factors)
+            f if f != 0 else (first if autos[i] else 1.0) for i, f in enumerate(factors)
         )
         return _bd_scale(shape, by=resolved)
 

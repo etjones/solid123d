@@ -60,8 +60,7 @@ class TestTextFontResolution:
             "Acad",
             font_size=10,
             font_path=(
-                "/System/Library/Fonts/Supplemental/"
-                "Academy Engraved LET Fonts.ttf"
+                "/System/Library/Fonts/Supplemental/Academy Engraved LET Fonts.ttf"
             ),
         ).area
         arial = BdText("Acad", font_size=10, font="Arial").area

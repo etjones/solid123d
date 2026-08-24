@@ -10,6 +10,7 @@ shapes instead of OpenSCAD source.
 ```python
 # before
 from solid import translate, cube, scad_render_to_file
+
 # after
 from solid123d import translate, cube, scad_render_to_file
 
@@ -25,7 +26,7 @@ from build123d import fillet
 from solid123d import cube
 
 part = cube(20, center=True)
-part = fillet(part.edges(), radius=2)   # native build123d from here on
+part = fillet(part.edges(), radius=2)  # native build123d from here on
 ```
 
 ## Supported

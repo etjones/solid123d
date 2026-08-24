@@ -92,8 +92,7 @@ class TestPrimitives:
 
     def test_polygon_with_hole(self) -> None:
         shape = polygon(
-            points=[[0, 0], [10, 0], [10, 10], [0, 10],
-                    [2, 2], [8, 2], [8, 8], [2, 8]],
+            points=[[0, 0], [10, 0], [10, 10], [0, 10], [2, 2], [8, 2], [8, 8], [2, 8]],
             paths=[[0, 1, 2, 3], [4, 5, 6, 7]],
         )
         assert shape.area == pytest.approx(100 - 36)
@@ -179,7 +178,9 @@ class TestMinkowski:
     """
 
     @staticmethod
-    def _steiner(volume: float, area: float, edges: list[tuple[float, float]], r: float) -> float:
+    def _steiner(
+        volume: float, area: float, edges: list[tuple[float, float]], r: float
+    ) -> float:
         return (
             volume
             + area * r
@@ -190,7 +191,9 @@ class TestMinkowski:
     def test_box_plus_sphere_matches_steiner_formula(self) -> None:
         box = cube([20, 15, 10], center=True)
         shape = minkowski()(box, sphere(3))
-        edges = [(20, math.pi / 2)] * 4 + [(15, math.pi / 2)] * 4 + [(10, math.pi / 2)] * 4
+        edges = (
+            [(20, math.pi / 2)] * 4 + [(15, math.pi / 2)] * 4 + [(10, math.pi / 2)] * 4
+        )
         expected = self._steiner(20 * 15 * 10, 2 * (300 + 200 + 150), edges, 3)
         assert shape.volume == pytest.approx(expected, rel=1e-9)
 
@@ -274,9 +277,7 @@ class TestExtrusions:
     def test_rotate_extrude_torus(self) -> None:
         shape = rotate_extrude()(translate([10, 0, 0])(circle(r=2)))
         # torus volume: 2 * pi^2 * R * r^2
-        assert shape.volume == pytest.approx(
-            2 * math.pi**2 * 10 * 4, rel=1e-6
-        )
+        assert shape.volume == pytest.approx(2 * math.pi**2 * 10 * 4, rel=1e-6)
 
     def test_rotate_extrude_partial(self) -> None:
         shape = rotate_extrude(angle=180)(translate([10, 0, 0])(circle(r=2)))
