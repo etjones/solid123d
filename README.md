@@ -78,7 +78,6 @@ part = fillet(part.edges(), radius=2)  # native build123d from here on
 - **Typing aliases**: `OpenSCADObject` and `OpenSCADObjectPlus` are
   aliases of `build123d.Shape`, so existing
   annotations like `def some_obj() -> OpenSCADObject:` remain correct
-
 ## Known differences
 
 - `a * b` intersection is not overloaded; use `a & b` or `intersection()(a, b)`.
