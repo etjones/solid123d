@@ -195,3 +195,94 @@ and delete the identity shortcut outright (single convex primitives still
 come back exact via their rungs; hull of a single non-convex child now
 computes the true hull). Verified against the full Gridfinity cup:
 0.03% volume agreement with OpenSCAD. 4 new tests; 84 pass. -> 0.2.1
+
+## 2026-08-25
+
+**User**: Wants OpenSCAD customizer behavior in solid123d: tune in
+OpenSCAD's existing customizer UI, export the chosen parameter set, have
+solid123d respect it. (Wants to avoid building any custom UI.) Asked for
+a minimal OpenSCAD customizer example.
+
+**Assistant**: Used OpenSCAD's native parameter-set JSON as the bridge
+(the file the customizer's "+" button writes next to the .scad, same one
+the CLI takes via `-p file.json -P set`). Added:
+- examples/customizer/coin.scad — minimal annotated customizer example
+  (tabs, slider/step/dropdown-range comments, [Hidden] section); verified
+  by rendering all 3 sets through OpenSCAD 2025.07 CLI.
+- examples/customizer/coin.json — 3 parameter sets in OpenSCAD's format
+  (all values strings, fileFormatVersion 1).
+- src/solid123d/customizer.py — load_params(path, set_name) +
+  parameter_sets(path); accepts .json or .scad (finds sibling .json);
+  coerces OpenSCAD literal strings via json.loads fallback-to-str.
+- examples/customizer/coin.py — Python twin building the same coin from
+  the same JSON: `coin(**load_params("coin.scad", "big_thin"))`.
+- tests/test_customizer.py; README section. 112 tests pass; ruff clean.
+
+Note: repo moved to ~/Dropbox/Projects/solid123d since last session;
+a few files initially written to the old path were relocated and the
+stale directory removed. Work is on branch feature/customizer,
+uncommitted.
+
+**User**: Customizer use should be the default behavior: a similarly
+named JSON next to the target file should apply automatically, with a
+command line switch to opt out.
+
+**Assistant**: Added `customize()` to solid123d.customizer: called once
+after module-level parameter defaults, it finds `<script>.json` beside
+the calling script (via caller frame globals' __file__), applies the
+chosen set to existing variables only (OpenSCAD semantics; unknown keys
+warn), and is a silent no-op when no JSON exists. Set selection:
+-P NAME > set named "default" > only set > KeyError naming candidates.
+Switches (mirroring OpenSCAD CLI, consumed from sys.argv so user
+argparse is undisturbed): -P/--parameter-set, -p/--parameter-file,
+--no-customizer. Example coin.py rewritten to the default-on pattern;
+README updated. 122 tests pass with warnings-as-errors; ruff clean.
+Still uncommitted on feature/customizer.
+
+**User** (mid-turn): Add CLI output confirming the parameter set is
+being applied, so nobody is confused by values coming from a JSON file
+they forgot about.
+
+**Assistant**: customize() now prints to stderr:
+"Applying customizer parameter set 'name' from /path/coin.json (use
+--no-customizer to ignore it)". stderr so piped stdout stays clean;
+quiet when skipped or when no file exists. Two tests added (announce
+content, quiet with --no-customizer); 124 pass; ruff clean.
+
+**User**: Confirmed the customizer round trip works. The missing piece
+was that in recent OpenSCAD nightlies (2023.10+ incl. 2025.07.18),
+presets are written to the JSON on normal file save (Cmd-S) after
+pressing "+" — the documented "save preset" button no longer exists
+(openscad/openscad#4804). Also confirmed intent: the customizer UI side
+is OpenSCAD-only; Python models consume the JSON via customize(), with a
+parameter-stub .scad as the tuning UI for Python-only designs.
+
+**User**: With solid123d installed editable into scad123d, scad2step
+didn't apply a parameter-set JSON sitting next to the input .scad.
+
+**Assistant**: Diagnosis: customize() only serves Python scripts;
+scad123d's converter had no customizer integration at all. Added public
+`resolve_param_set(path, set_name)` to solid123d.customizer (shared
+selection rules: named > "default" > only set > KeyError), refactored
+customize() onto it. In scad123d (branch feature/customizer-param-sets):
+scad2step now auto-applies a sibling <input>.json (announced on stderr),
+with -P/--parameter-set, -p/--parameter-file, --no-customizer flags;
+JSON params feed OpenSCAD as -D overrides, and explicit -D beats the
+file (OpenSCAD's own precedence). 8 new CLI tests; 250 pass there,
+126 here. Verified on the user's battery-organizer file (its JSON has
+two sets, no "default", so -P is required — clear error says so).
+Note: scad123d now uses solid123d.resolve_param_set, which is
+unreleased; scad123d's `solid123d>=0.3.1` floor must bump when the next
+solid123d version ships.
+
+**User**: Agreed the twin-model example was contrived. Keep scad123d
+as-is; add -D support to customize(); remove the customizer example and
+README section (keep the functionality, document later if demand
+appears). Then push/tag/publish both packages, restoring scad123d's
+dependency on the PyPI solid123d.
+
+**Assistant**: customize() now honors repeatable `-D name=value`
+(OpenSCAD-literal coercion, beats the parameter file, still applies
+under --no-customizer, consumed from argv). Deleted examples/ and the
+README customizer section; tests rewritten self-contained (129 pass).
+Version 0.3.1 -> 0.4.0; released.
