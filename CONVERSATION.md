@@ -388,3 +388,14 @@ bullet — 141 tests. Both CIs green. Merge #9 first; GitHub retargets #8
 to main automatically. Noted in PR #9 that the failure is deterministic
 (cap follows the seam meridian; rotation avoids it) but the guard makes
 that knowledge unnecessary for correctness.
+
+**User**: Merge both PRs; no release yet.
+
+**Assistant**: Merged #9 (seam workaround) to main. Deleting its branch
+auto-closed stacked #8, which GitHub cannot reopen once the base ref is
+gone — opened #10 from the same branch (color-only diff after the merge)
+and merged it after green CI. main now has both; 141 tests pass on main.
+Unreleased — next solid123d release will carry the customizer work
+(already on main since 0.4.0? no: customizer shipped in 0.4.0; this
+adds seam guard + color partition) and scad123d's 3 overlap-semantics
+tests need updating at its version bump.
