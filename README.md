@@ -68,8 +68,11 @@ part = fillet(part.edges(), radius=2)  # native build123d from here on
   `steelblue`, numeric colors get the CSS name or hex), so multi-material
   models open in slicers and CAD viewers with real per-part colors and
   recognizable names instead of one gray `COMPOUND`. Genuinely overlapping
-  colored parts fuse (their merged region has no well-defined color) and
-  carry the first part's color. Uncolored models are entirely unaffected.
+  parts are partitioned instead of fused: later children claim contested
+  volume, and each earlier `color()` region keeps its color wherever no
+  later sibling claims the space — `union(color("red") sphere, cube)`
+  yields a red sphere-minus-cube body beside the uncolored cube.
+  Uncolored models are entirely unaffected.
 - **2D → 3D**: `linear_extrude` (incl. `center`, `scale`; no `twist`),
   `rotate_extrude` (incl. partial `angle`)
 - **Export**: `scad_render_to_file` writes `.step`/`.stl`; a `.scad`
