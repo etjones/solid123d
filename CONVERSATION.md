@@ -399,3 +399,10 @@ Unreleased — next solid123d release will carry the customizer work
 (already on main since 0.4.0? no: customizer shipped in 0.4.0; this
 adds seam guard + color partition) and scad123d's 3 overlap-semantics
 tests need updating at its version bump.
+
+**User**: Run the 0.5.0 release train and update scad123d's tests.
+
+**Assistant**: solid123d 0.5.0: seam-guard workaround (gated,
+process-wide, canary-tested) + color-partitioning union. Minor-version
+bump because overlapping-colored-union semantics visibly change
+(partition instead of fuse-with-first-color).
