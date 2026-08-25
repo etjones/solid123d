@@ -373,3 +373,18 @@ the moment a build123d upgrade fixes #1428 — flip the flag then.
 3 failures are its tests asserting the old fuse-with-first-color
 overlap semantics that Route A replaces (to update on its next
 solid123d bump).
+
+**User**: Asked how interleaved the seam workaround is with the color
+partition; wants separate PRs/branches. Also noted the seam failure is
+reliable/predictable — rotating the seam out of the intersection avoids
+it; "seams & booleans don't mix" as manual intuition.
+
+**Assistant**: After the consolidation the diff split cleanly by file.
+Restructured into a stack: PR #9 (fix/occt-seam-clean off main):
+occt_workarounds.py + __init__ hook + canary/seam tests — 136 tests
+pass standalone. PR #8 (feature/color-partition-union, force-updated,
+base retargeted onto #9): _common.py partition + test_color.py + README
+bullet — 141 tests. Both CIs green. Merge #9 first; GitHub retargets #8
+to main automatically. Noted in PR #9 that the failure is deterministic
+(cap follows the seam meridian; rotation avoids it) but the guard makes
+that knowledge unnecessary for correctness.
