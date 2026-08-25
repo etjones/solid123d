@@ -7,7 +7,14 @@ with regular build123d code and exported to STEP/STL.
 
 from build123d import Shape
 
+from . import occt_workarounds
 from ._common import color_label
+
+# Gated on occt_workarounds.OCCT_SPHERE_SEAM_BUG_IS_UNFIXED: while
+# upstream loses seam-crossed geometry in clean() (gumyr/build123d#1428),
+# patch Shape.clean process-wide so union() and a user's own `a + b`
+# behave identically. Flip the flag off once upstream is fixed.
+occt_workarounds.install()
 from .booleans import difference, hull, intersection, minkowski, union
 from .extrusions import linear_extrude, rotate_extrude
 from .hull import analytic_hull

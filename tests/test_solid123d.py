@@ -316,3 +316,32 @@ class TestUtils:
     def test_up(self) -> None:
         lo, _ = bbox(up(3)(cube(1)))
         assert lo[2] == pytest.approx(3)
+
+
+class TestSeamRobustBooleans:
+    """build123d's plain +/- silently lose geometry when a curved face's
+    parametric seam lies in the work region (gumyr/build123d#1428); the
+    gated patch in occt_workarounds.py guards the clean step that causes
+    it, everywhere in the process.
+    """
+
+    def test_difference_keeps_all_six_caps(self) -> None:
+        # plain `-` drops the +X cap (the sphere's seam meridian) -> 73.30
+        d = difference()(sphere(5), cube(8, center=True))
+        assert d.volume == pytest.approx(87.9646, rel=1e-4)
+        assert len([x for x in d.solids() if x.volume > 1e-6]) == 6
+
+    def test_union_keeps_the_seam_side_material(self) -> None:
+        # plain `+` loses the same material -> 551.64 and a non-solid export
+        u = union()(sphere(5), cube(8, center=True))
+        sphere_vol = 4 / 3 * math.pi * 125
+        inter = intersection()(sphere(5), cube(8, center=True)).volume
+        assert u.volume == pytest.approx(sphere_vol + 512 - inter, rel=1e-6)
+        assert u.volume == pytest.approx(599.9646, rel=1e-4)
+        assert len(u.solids()) == 1
+
+    def test_union_output_stays_clean(self) -> None:
+        # the raw fuzzy op leaves splitter faces; clean() merges them so
+        # output matches what build123d's operators produce
+        u = union()(cube(10), translate([5, 0, 0])(cube(10)))
+        assert len(u.faces()) == 6

@@ -286,3 +286,90 @@ dependency on the PyPI solid123d.
 under --no-customizer, consumed from argv). Deleted examples/ and the
 README customizer section; tests rewritten self-contained (129 pass).
 Version 0.3.1 -> 0.4.0; released.
+
+**User**: Take a run at Route A now (color-partitioning union) —
+feature branch, experimental.
+
+**Assistant**: Branch feature/color-partition-union. group()'s overlap
+path now partitions instead of fusing: nested colored compounds expand
+to leaves; adjacent same-colored runs fuse first; later children clip
+earlier ones (rule: "a color() region keeps its color wherever no later
+sibling claims the space"); empty remainders drop; result is a Compound
+of touching bodies with colors/labels restored after each boolean.
+Motivating example verified in STEP: red sphere-minus-cube body beside
+the uncolored cube, 3 PRODUCTs, red preserved. scad123d inherits the
+behavior at its next solid123d version bump (its union delegates to
+group()).
+
+Discovered en route: build123d's plain `-` AND `+` silently lose
+geometry when a curved face's parametric seam lies in the work region —
+sphere(5)-cube(8,center) drops the +X cap (73.30 vs 87.96), and the
+fuse loses the same material (551.64 vs 599.96). Any explicit OCCT
+fuzzy value (even 1e-9) fixes both. Partition uses robust
+_cut()/_fuse() helpers (BRepAlgoAPI + SetFuzzyValue 1e-9) and a
+volume-conservation fallback to the plain fuse. Routing difference()/
+intersection()/plain unions through the same helpers + upstream report
+flagged as a separate task. 134 tests pass; ruff clean.
+
+**User**: The regenerated cube_sphere_colored.step is missing one of six
+domes and PrusaSlicer reads zero volume — is this the build123d bug?
+Asked for the proposed workaround and its speed/clarity cost; work on
+the existing branch; NO upstream bug report without preview.
+
+**Assistant**: Confirmed (file had 0 solids, bbox x stopped at 4.0 where
+the +X cap should reach 5.0). Root cause CORRECTED during the fix: the
+OCCT boolean algorithms are fine, and fuzzy tolerance was a red
+herring — the loss happens in build123d's automatic clean()
+(ShapeUpgrade_UnifySameDomain), which collapses a face crossed by a
+curved surface's parametric seam. build123d's +/- run that clean
+unguarded. Workaround on feature/color-partition-union:
+_raw_bool (BRepAlgoAPI Cut/Fuse/Common without clean) + _cleaned()
+(clean on a deepcopy — clean() mutates in place! — kept only when
+volume is conserved). union()/group()'s fuse, difference(),
+intersection(), and the partition internals all routed through it;
+2D operands keep native operators. Speed: guarded pair is FASTER than
+the plain operators (16.3 vs 22.9 ms on the sphere/cube case; 3.3 vs
+4.8 ms on cubes) because build123d cleans unconditionally. Clarity
+cost: ~60 lines of documented helpers in _common.py. 137 tests pass;
+both sample models now export with correct volume (599.9646) and
+reimport as real solids. Upstream report to build123d drafted for
+user preview, not submitted.
+
+**User**: Approved the report after asking for a workaround demo, STEP
+exports showing the loss visually, and the seam-rotation experiment.
+Then: file it with scripts and STEP files attached.
+
+**Assistant**: Rotation experiment confirmed causation (degenerate cap
+follows the seam: 0->+X, 90->+Y, 180->-X; 45deg/edge-aimed is correct).
+Filed https://github.com/gumyr/build123d/issues/1428 with the results
+table, rotation evidence, guarded_clean workaround (+ its stated
+volume-only caveat), inline repro script, and a public gist holding the
+script plus 4 STEP pairs (broken vs workaround):
+https://gist.github.com/etjones/c68e633b07dc7184504b9b303a93555e
+
+**User**: (After maintainer replied on #1428 that OCCT sphere-seam
+problems are well known.) Rejected the split behavior where union()
+succeeds but native `+` fails; wants the fix applied everywhere
+scad123d/solid123d works, gated by a flag like
+OCCT_SPHERE_SEAM_BUG_IS_UNFIXED so stock behavior returns easily when
+upstream fixes it.
+
+**Assistant**: Restructured into src/solid123d/occt_workarounds.py, the
+single home of the workaround, gated by
+OCCT_SPHERE_SEAM_BUG_IS_UNFIXED=True. Discovery: build123d's _bool_op
+runs ShapeUpgrade_UnifySameDomain inline (not via Shape.clean), gated
+by build123d's own SkipClean flag — so patching Shape.clean alone
+missed the operators. install() (run on solid123d import) now patches
+two chokepoints: Shape.clean -> volume-guarded clean, and
+Shape._bool_op -> original op under SkipClean + guarded clean after.
+Every path is now consistent: solid123d's union()/difference()/
+intersection(), users' native +/-/& on our shapes, and all of scad123d
+(patch activates on import). All scattered call-site helpers
+(_raw_bool/_cut/_fuse/_intersect/_cleaned) deleted; _common.py and
+booleans.py are back to native operators. Canary test asserts the
+upstream bug still exists via uninstall(); it fails (with instructions)
+the moment a build123d upgrade fixes #1428 — flip the flag then.
+141 tests pass. scad123d's suite run against the branch: 248 pass; the
+3 failures are its tests asserting the old fuse-with-first-color
+overlap semantics that Route A replaces (to update on its next
+solid123d bump).
