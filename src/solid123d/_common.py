@@ -1,4 +1,11 @@
-"""Shared helpers for the SolidPython -> build123d bridge."""
+"""Shared helpers for the SolidPython -> build123d bridge.
+
+Boolean operations here use build123d's native operators. Their
+seam-related geometry loss (gumyr/build123d#1428) is handled in one
+place -- the gated Shape.clean patch in occt_workarounds.py -- so
+solid123d's union()/difference(), a user's own ``a + b``, and scad123d
+all behave identically.
+"""
 
 import math
 import warnings
@@ -7,7 +14,7 @@ from functools import reduce
 from operator import add
 
 import webcolors
-from build123d import Compound, Shape
+from build123d import Color, Compound, Shape
 
 Vec3 = tuple[float, float, float]
 
@@ -118,15 +125,89 @@ def group(children: Iterable[object]) -> Shape:
     if math.isclose(fused.volume, total_volume, rel_tol=1e-9, abs_tol=1e-9):
         return Compound(children=list(shapes))
 
-    # Real overlap: which color the merged region should be is genuinely
-    # undefined without OCCT-level boolean history tracking. No color at
-    # all is a worse default than picking one, so fall back to the first
-    # child that had one.
-    if fused.color is None:
-        for s in shapes:
-            if s.color is not None:
-                fused.color = s.color
-                break
-    if fused.color is not None and not fused.label:
-        fused.label = color_label(tuple(fused.color))
-    return fused
+    # Real overlap: partition instead of fusing. Later children claim
+    # contested volume; each earlier child keeps its color on whatever
+    # part of it nothing later covers. union(color("red") sphere, cube)
+    # thus yields a red sphere-minus-cube body plus the uncolored cube --
+    # same total volume as the fuse, but the colors survive.
+    return _partitioned_union(shapes, fused)
+
+
+def _rgba(shape: Shape) -> tuple | None:
+    """The color a partitioned piece should carry, as a comparable key."""
+    return tuple(shape.color) if shape.color is not None else None
+
+
+def _color_leaves(shapes: Iterable[Shape]) -> list[Shape]:
+    """Expand colorless Compounds whose children carry authored colors,
+    so partitioning sees each colored body -- a nested disjoint colored
+    group arrives as such a Compound."""
+    out: list[Shape] = []
+    for shape in shapes:
+        if shape._color is None and shape.children and _carries_color(shape):
+            out.extend(_color_leaves(list(shape.children)))
+        else:
+            out.append(shape)
+    return out
+
+
+def _recolored(shape: Shape, rgba: tuple | None, label: str) -> Shape:
+    """Booleans drop color and label; restore a piece's own."""
+    if rgba is not None:
+        shape.color = Color(*rgba)
+        shape.label = label or color_label(rgba)
+    elif label:
+        shape.label = label
+    return shape
+
+
+def _partitioned_union(shapes: list[Shape], fused: Shape) -> Shape:
+    """Union overlapping children as touching bodies, colors intact.
+
+    Precedence rule: a ``color()`` region keeps its color wherever no
+    later sibling claims the space -- later children clip earlier ones,
+    and the last child always survives whole. Runs of adjacent
+    same-colored children are fused first, so plain OpenSCAD idioms (a
+    union of many uncolored or identically-colored parts) still produce
+    a single merged solid per color run.
+
+    The accumulated fuse of all children is the ground truth for
+    volume. If partitioning ever loses material, that fuse is returned
+    instead: correct geometry beats color fidelity.
+    """
+    leaves = _color_leaves(shapes)
+
+    coalesced: list[Shape] = []
+    for shape in leaves:
+        if coalesced and _rgba(coalesced[-1]) == _rgba(shape):
+            prev = coalesced[-1]
+            coalesced[-1] = _recolored(prev + shape, _rgba(prev), prev.label)
+        else:
+            coalesced.append(shape)
+    if len(coalesced) == 1:
+        return coalesced[0]
+
+    kept: list[Shape] = []
+    later: Shape | None = None
+    for shape in reversed(coalesced):
+        if later is None:
+            kept.append(shape)
+            later = shape
+        else:
+            clipped = shape - later
+            if clipped.volume > 1e-9:
+                kept.append(_recolored(clipped, _rgba(shape), shape.label))
+            later = later + shape
+    kept.reverse()
+
+    if len(kept) == 1:
+        return kept[0]
+    result = Compound(children=kept)
+    if not math.isclose(result.volume, later.volume, rel_tol=1e-6):
+        warnings.warn(
+            "solid123d: color-preserving union lost volume to a boolean "
+            "glitch; returning the plain fused solid without colors",
+            stacklevel=3,
+        )
+        return fused
+    return result
