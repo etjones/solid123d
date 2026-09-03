@@ -36,7 +36,15 @@ def linear_extrude(
     def apply(*children: Shape) -> Shape:
         face = group(children)
         if scale_xy == (1.0, 1.0):
-            solid = _bd_extrude(face, amount=height)
+            # OpenSCAD ignores a polygon's point-winding order entirely --
+            # linear_extrude always sweeps toward +Z. build123d's extrude()
+            # instead extrudes each face along its own face-plane normal,
+            # which depends on that face's winding; a profile assembled
+            # from faces with mixed winding (e.g. a BOSL2 stroke() ribbon
+            # unioned with round_corners() joint fragments) then partially
+            # extrudes backward. Pin the direction so every face sweeps the
+            # same way regardless of how it happened to wind.
+            solid = _bd_extrude(face, amount=height, dir=(0, 0, 1))
         else:
             # OCCT's loft accepts one face per section, so a disconnected
             # profile (a compound of several faces) must be lofted face by

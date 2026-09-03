@@ -262,6 +262,23 @@ class TestExtrusions:
         # volume = h/3 * (A1 + A2 + sqrt(A1*A2)) with A1=4, A2=1 -> 28/3 each
         assert shape.volume == pytest.approx(2 * 28 / 3, rel=1e-6)
 
+    def test_linear_extrude_ignores_face_winding_direction(self) -> None:
+        # OpenSCAD's polygon()/linear_extrude() never look at point-winding
+        # order -- it always sweeps toward +Z. build123d's own extrude()
+        # instead sweeps each face along that face's own plane normal, which
+        # IS winding-dependent. A profile assembled from faces with mixed
+        # winding (e.g. a real model's BOSL2 stroke() ribbon unioned with
+        # round_corners() joint fragments -- see scad123d's
+        # ultimate-junction-box-cover repro) then partially extrudes
+        # backward into -Z, splitting what should be one solid in two.
+        ccw = polygon([[0, 0], [4, 0], [4, 4], [0, 4]])  # +Z normal
+        cw = polygon([[6, 0], [6, 4], [10, 4], [10, 0]])  # -Z normal
+        shape = linear_extrude(height=5)(union()(ccw, cw))
+        lo, hi = bbox(shape)
+        assert lo[2] == pytest.approx(0)
+        assert hi[2] == pytest.approx(5)
+        assert shape.volume == pytest.approx(2 * 4 * 4 * 5)
+
     def test_linear_extrude_scale_off_axis_scales_about_origin(self) -> None:
         # OpenSCAD scales the cross-section about the global Z axis, so an
         # off-axis island's top face migrates toward the axis rather than
