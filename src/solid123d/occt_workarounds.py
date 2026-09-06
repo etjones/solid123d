@@ -45,11 +45,32 @@ mangling faces would pass the guard.
 
 import copy
 import math
+import warnings
 
 from build123d import Shape
 from build123d.topology.shape_core import SkipClean
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 
 OCCT_SPHERE_SEAM_BUG_IS_UNFIXED = True
+
+# How much the volume may move before a clean() is rejected. The two
+# volumes are integrated over different face sets (fragmented vs. unified),
+# and that alone differs by 1e-8 to 2e-7 relative on real boolean results
+# -- measured on a 52-wedge gear union from the CodeCAD corpus. At the
+# original 1e-9 that noise rejected 20 of 21 cleans, so every boolean ran
+# on the previous one's unmerged fragments (26 -> 822 faces) until OCCT's
+# fuse failed outright and returned an inverted 8-face shape. The defect
+# this guards against loses ~17% (73.30 vs 87.96 mm^3), so 1e-5 is forty
+# times above the noise and four orders of magnitude below the bug.
+CLEAN_VOLUME_RTOL = 1e-5
+
+# Relative slack on the input-implied volume bounds before a boolean
+# result is declared implausible (tessellation and integration noise are
+# orders of magnitude below this), and OCCT's fuzzy tolerance, in model
+# units, used for the retry. 1e-5 mm merges the near-coincident faces that
+# defeat the exact algorithm without moving any real geometry.
+BOOLEAN_VOLUME_SLACK = 1e-4
+BOOLEAN_RETRY_FUZZ = 1e-5
 
 _original_clean = Shape.clean
 _original_bool_op = Shape._bool_op
@@ -65,24 +86,91 @@ def _volume_guarded_clean(self: Shape) -> Shape:
         return _original_clean(self)
     trial = copy.deepcopy(self)
     _original_clean(trial)
-    if math.isclose(trial.volume, before, rel_tol=1e-9, abs_tol=1e-9):
+    if math.isclose(trial.volume, before, rel_tol=CLEAN_VOLUME_RTOL, abs_tol=1e-9):
         self.wrapped = trial.wrapped
     return self
 
 
+def _volume_or_none(shape: Shape) -> float | None:
+    try:
+        return shape.volume
+    except Exception:  # noqa: BLE001 -- OCP mass properties can throw
+        return None
+
+
+def _volume_bounds(operation, args, tools) -> tuple[float, float] | None:
+    """The interval a boolean's volume must fall in, from its inputs.
+
+    A union holds at least its largest input and at most their sum; a cut
+    keeps at most the minuend and at least minuend minus tool; a common
+    part is at most the smallest input. Anything outside is not a
+    different-but-valid answer -- it is OCCT having failed silently.
+    """
+    va = [v for v in (_volume_or_none(a) for a in args) if v is not None]
+    vt = [v for v in (_volume_or_none(t) for t in tools) if v is not None]
+    if not va:
+        return None
+    if isinstance(operation, BRepAlgoAPI_Fuse):
+        return max(va + vt), sum(va) + sum(vt)
+    if isinstance(operation, BRepAlgoAPI_Cut):
+        return max(sum(va) - sum(vt), 0.0), sum(va)
+    if isinstance(operation, BRepAlgoAPI_Common):
+        return 0.0, min(va + vt)
+    return None
+
+
+def _plausible(volume: float, bounds: tuple[float, float]) -> bool:
+    lo, hi = bounds
+    slack = BOOLEAN_VOLUME_SLACK * max(hi, 1.0)
+    return lo - slack <= volume <= hi + slack
+
+
 def _guarded_bool_op(self: Shape, args, tools, operation) -> Shape:
-    """Drop-in Shape._bool_op: raw boolean, then volume-guarded clean.
+    """Drop-in Shape._bool_op: raw boolean, sanity-checked, then the
+    volume-guarded clean.
 
     _bool_op runs ShapeUpgrade_UnifySameDomain inline (not via
     Shape.clean), gated by build123d's own SkipClean flag -- so the
     boolean executes under SkipClean, and the unify pass is reapplied
     afterwards through the guarded clean.
+
+    The sanity check is the second workaround this module carries: OCCT's
+    fuse can return a *valid* shape with most of the material missing when
+    an operand nearly coincides with part of the accumulated result (a
+    ``for (i = [0 : n])`` loop that lays its last copy on its first, off
+    by rotation-matrix noise; found on a servo horn from the CodeCAD
+    corpus, 17 mm^3 for what should be 207). Such a result lies outside
+    the bounds its inputs imply, and the same operation with a fuzzy
+    tolerance gets it right.
     """
+    args = list(args)
+    tools = list(tools)
+    bounds = _volume_bounds(operation, args, tools)
     with SkipClean():
         result = _original_bool_op(self, args, tools, operation)
-    if result is not None and result.wrapped is not None:
-        result = _volume_guarded_clean(result)
-    return result
+    if result is None or result.wrapped is None:
+        return result
+    volume = _volume_or_none(result)
+    if bounds is not None and volume is not None and not _plausible(volume, bounds):
+        retry = type(operation)()
+        retry.SetFuzzyValue(BOOLEAN_RETRY_FUZZ)
+        with SkipClean():
+            candidate = _original_bool_op(self, args, tools, retry)
+        candidate_volume = (
+            _volume_or_none(candidate)
+            if candidate is not None and candidate.wrapped is not None
+            else None
+        )
+        if candidate_volume is not None and _plausible(candidate_volume, bounds):
+            result = candidate
+        else:
+            warnings.warn(
+                "solid123d: OCCT boolean returned an implausible volume "
+                f"({volume:.6g}, inputs imply {bounds[0]:.6g}..{bounds[1]:.6g}) "
+                "and a fuzzy retry did not help; the result is probably wrong",
+                stacklevel=4,
+            )
+    return _volume_guarded_clean(result)
 
 
 def install() -> None:
