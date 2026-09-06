@@ -79,21 +79,38 @@ _original_bool_op = Shape._bool_op
 def _volume_guarded_clean(self: Shape) -> Shape:
     """Drop-in Shape.clean: adopt the clean only if volume is conserved."""
     try:
-        before = self.volume
+        before = _leaf_volume(self)
     except Exception:  # noqa: BLE001 -- any OCP failure computing mass
         # properties (Standard_Failure etc.): fall back to stock clean,
         # which is strictly no worse than pre-workaround behavior
         return _original_clean(self)
     trial = copy.deepcopy(self)
     _original_clean(trial)
-    if math.isclose(trial.volume, before, rel_tol=CLEAN_VOLUME_RTOL, abs_tol=1e-9):
+    if math.isclose(
+        _leaf_volume(trial), before, rel_tol=CLEAN_VOLUME_RTOL, abs_tol=1e-9
+    ):
         self.wrapped = trial.wrapped
     return self
 
 
+def _leaf_volume(shape: Shape) -> float:
+    """Volume summed over the shape's solids, whatever the nesting.
+
+    Not ``shape.volume``: build123d's Compound.volume sums only the
+    compound's *direct* Solid children, and the color-partitioned union
+    in _common.group() returns a Compound of per-color Compounds -- which
+    reads as 0. Signed on purpose: an inside-out result sums negative and
+    is thereby implausible too.
+    """
+    solids = shape.solids()
+    if not solids:
+        return shape.volume  # a Solid, or 2D geometry (0)
+    return sum(s.volume for s in solids)
+
+
 def _volume_or_none(shape: Shape) -> float | None:
     try:
-        return shape.volume
+        return _leaf_volume(shape)
     except Exception:  # noqa: BLE001 -- OCP mass properties can throw
         return None
 
