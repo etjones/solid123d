@@ -138,3 +138,41 @@ class TestImplausibleBooleanRetry:
         with pytest.warns(UserWarning, match="implausible volume"):
             fused = Box(10, 10, 10) + Pos(5, 0, 0) * Box(10, 10, 10)
         assert fused.volume == pytest.approx(1)  # the sliver, kept but warned about
+
+
+class TestNestedCompoundOperands:
+    def test_bounds_see_through_nested_compounds(self, monkeypatch) -> None:
+        """A color-partitioned union is a Compound of Compounds, whose
+        build123d .volume is 0. Bounds computed from that would flag every
+        correct result as implausible (spurious fuzzy retries, warnings).
+        Measured by leaf solids, a nested operand is just its solids."""
+        from build123d import Compound
+
+        nested = Compound(
+            [Compound([Box(10, 10, 10)]), Compound([Pos(20, 0, 0) * Box(10, 10, 10)])]
+        )
+        assert nested.volume == 0  # the blind spot
+        assert occt_workarounds._leaf_volume(nested) == pytest.approx(2000)
+        real = occt_workarounds._original_bool_op
+        calls: list[float] = []
+
+        def counting(self, args, tools, operation):
+            calls.append(operation.FuzzyValue())
+            return real(self, args, tools, operation)
+
+        monkeypatch.setattr(occt_workarounds, "_original_bool_op", counting)
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")  # any "implausible" warning fails
+            fused = nested + Pos(5, 0, 0) * Box(10, 10, 10)
+        assert occt_workarounds.BOOLEAN_RETRY_FUZZ not in calls  # no retry
+        assert occt_workarounds._leaf_volume(fused) == pytest.approx(2500)
+
+    def test_inverted_result_is_implausible(self) -> None:
+        from OCP.BRepAlgoAPI import BRepAlgoAPI_Fuse
+
+        a, b = Box(10, 10, 10), Pos(5, 0, 0) * Box(10, 10, 10)
+        bounds = occt_workarounds._volume_bounds(BRepAlgoAPI_Fuse(), [a], [b])
+        assert bounds == pytest.approx((1000, 2000))
+        assert not occt_workarounds._plausible(-1500, bounds)
