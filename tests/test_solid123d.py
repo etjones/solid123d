@@ -362,3 +362,52 @@ class TestSeamRobustBooleans:
         # output matches what build123d's operators produce
         u = union()(cube(10), translate([5, 0, 0])(cube(10)))
         assert len(u.faces()) == 6
+
+
+class TestNaryBooleans:
+    """union()/difference() hand every operand to OCCT in one operation.
+    A pairwise reduce re-processes the growing result at each step --
+    quadratic once curved faces stop merging (200 overlapping cylinders:
+    19.5 s pairwise, 1.1 s N-ary); every timeout in the CodeCAD corpus
+    runs sat in that loop."""
+
+    @staticmethod
+    def _count_ops(monkeypatch) -> list[int]:
+        from solid123d import occt_workarounds
+
+        real = occt_workarounds._original_bool_op
+        tools_per_call: list[int] = []
+
+        def counting(self, args, tools, operation):
+            tools_per_call.append(len(list(tools)))
+            return real(self, args, list(tools), operation)
+
+        monkeypatch.setattr(occt_workarounds, "_original_bool_op", counting)
+        return tools_per_call
+
+    def test_union_of_many_is_one_operation(self, monkeypatch) -> None:
+        calls = self._count_ops(monkeypatch)
+        parts = [translate([i * 8, 0, 0])(cube(10)) for i in range(6)]
+        fused = union()(*parts)
+        assert calls == [5]  # one fuse, five tools
+        assert fused.volume == pytest.approx(10 * 10 * (8 * 5 + 10))
+
+    def test_difference_of_many_is_one_operation(self, monkeypatch) -> None:
+        calls = self._count_ops(monkeypatch)
+        holes = [
+            translate([x, 0, 0])(cylinder(r=1, h=30, center=True)) for x in (-6, 0, 6)
+        ]
+        plate = difference()(cube([20, 10, 4], center=True), *holes)
+        assert calls == [3]
+        assert plate.volume == pytest.approx(800 - 3 * math.pi * 4, rel=1e-6)
+
+    def test_nary_union_matches_pairwise_on_overlapping_cylinders(self) -> None:
+        from functools import reduce
+        from operator import add
+
+        parts = [
+            translate([i * 7, (i % 2) * 3, 0])(cylinder(r=5, h=10)) for i in range(40)
+        ]
+        assert union()(*parts).volume == pytest.approx(
+            reduce(add, parts).volume, rel=1e-6
+        )
