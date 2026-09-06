@@ -10,8 +10,6 @@ all behave identically.
 import math
 import warnings
 from collections.abc import Iterable, Sequence
-from functools import reduce
-from operator import add
 
 import webcolors
 from build123d import Color, Compound, Shape
@@ -91,7 +89,12 @@ def group(children: Iterable[object]) -> Shape:
     if len(shapes) == 1:
         return shapes[0]
 
-    fused = reduce(add, shapes)
+    # One N-ary OCCT fuse, not a pairwise reduce: pairwise re-processes
+    # the ever-growing accumulated result at every step, which is
+    # quadratic once curved faces stop merging away (200 overlapping
+    # cylinders: 19.5 s pairwise, 1.1 s in one operation), and every
+    # timeout in the CodeCAD corpus runs was in that loop.
+    fused = shapes[0].fuse(*shapes[1:])
 
     # Everything below exists only to keep authored color() information
     # alive; a group with no colors anywhere gets the plain fuse -- and

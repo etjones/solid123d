@@ -13,7 +13,7 @@ and a faceted approximation would defeat the point of a BRep kernel.
 
 from collections.abc import Callable
 from functools import reduce
-from operator import and_, sub
+from operator import and_
 
 from build123d import Shape
 
@@ -36,7 +36,9 @@ def difference() -> Applier:
         shapes = flatten(children)
         if not shapes:
             raise ValueError("difference() requires at least one shape")
-        return reduce(sub, shapes)
+        # OCCT's Cut takes every subtrahend at once: A - (B u C) is
+        # (A - B) - C, in one pass over A instead of one per subtrahend.
+        return shapes[0].cut(*shapes[1:]) if len(shapes) > 1 else shapes[0]
 
     return apply
 
