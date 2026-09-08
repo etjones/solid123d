@@ -452,4 +452,4 @@ rejected rule and were rewritten, and the full contract table is now
 pinned in test_regions.py (six rows plus volume conservation). Also
 consolidated one `boolean()` helper in `_common` that passes every body as
 its own OCCT argument, and fixed a local variable in `group()` that
-shadowed the module-level `total_volume()`. 214 tests pass.
+shadowed the module-level `total_volume()`. 192 tests pass.
