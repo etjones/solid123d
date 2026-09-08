@@ -105,6 +105,7 @@ def test_region_bodies_are_world_placed_solids_with_colors():
     for body in bodies:
         assert body.shape.Location().IsIdentity()
         assert Solid(body.shape).bounding_box().min.Z == pytest.approx(100)
+    assert sorted(round(b.volume) for b in bodies) == [500, 1000]
 
 
 def test_each_body_is_its_own_colored_product(tmp_path):

@@ -16,6 +16,8 @@ from pathlib import Path
 
 from build123d import Compound, Location, Shape
 from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
+from OCP.BRepGProp import BRepGProp
+from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_ReturnStatus
 from OCP.Interface import Interface_Static
 from OCP.Message import Message, Message_Gravity
@@ -53,6 +55,12 @@ class Body:
     def key(self) -> tuple | None:
         """Bucket key: colors equal to display precision are one color."""
         return None if self.rgba is None else tuple(round(v, 3) for v in self.rgba)
+
+    @property
+    def volume(self) -> float:
+        props = GProp_GProps()
+        BRepGProp.VolumeProperties_s(self.shape, props)
+        return abs(props.Mass())
 
 
 def region_bodies(shape: Shape) -> list[Body]:
