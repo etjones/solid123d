@@ -132,7 +132,9 @@ def _volume_bounds(operation, args, tools) -> tuple[float, float] | None:
     if isinstance(operation, BRepAlgoAPI_Cut):
         return max(sum(va) - sum(vt), 0.0), sum(va)
     if isinstance(operation, BRepAlgoAPI_Common):
-        return 0.0, min(va + vt)
+        # arguments form one group and tools another; the common part is
+        # at most the smaller group
+        return 0.0, min(sum(va), sum(vt))
     return None
 
 

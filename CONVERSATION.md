@@ -415,3 +415,27 @@ face OCCT listed first and extruded along the placed face's normal; from
 a top cap that goes up (z 16..28 instead of 4..16). Volume was right, so
 the volume-only tests never caught it. Fix: `extrude(dir=dir0)` along the
 shared axis; test now asserts the z-span. PR #14.
+
+**User** (via scad123d): build the per-body color plan: region invariant,
+color-aware difference/intersection, color() as a fill, own exporter with
+optional group-by-color, hull/minkowski rule.
+
+**Assistant**: Done on `feature/per-body-color`. `_common.py`: region
+helpers (`world_leaves` composes ancestor Locations onto leaf copies,
+`fill_color`, `assemble`, `checked`, `total_volume`, `baked`).
+`booleans.py`: `difference()` cuts each region body and re-attaches its
+color; `intersection()` applies the later-wins precedence pairwise; both
+check volume against a plain boolean with every body passed as its own
+argument -- a Compound of touching/overlapping solids is not a valid
+single OCCT argument (the op "succeeds" and returns the input unchanged),
+which is also what `difference()` on any colored model did before.
+`hull()`/`minkowski()` warn and drop children's colors. `transforms.py`:
+`color()` fills uncolored leaves (tree stays uncolored); `scale`/
+`mirror`/`resize` map over baked world leaves, keeping tree and colors.
+`export.py`: `region_bodies()` and `export_step(shape, path,
+group_by_color=False)` build the XDE doc directly -- one colored product
+per body, author's tree by default, per-color groups on request; single
+solid exported as a free shape. `occt_workarounds`: the common-volume
+bound is now group-wise (sum of args vs sum of tools). Tests:
+test_regions.py (18), test_export.py (9); one old test updated to the
+fill semantics; 183 pass.

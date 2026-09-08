@@ -61,27 +61,24 @@ part = fillet(part.edges(), radius=2)  # native build123d from here on
   what still raises.
 - **`polyhedron(points, faces)`** — explicit point/face solids, with
   OpenSCAD's tolerance for either winding direction.
-- **`color()` that survives into STEP export** — colored parts that don't
-  share volume (disjoint, or touching, like a part sitting in a cavity cut
-  for it) stay separate bodies, each keeping its own color, and every part
-  is labeled with the color name you wrote (`color("SteelBlue")` →
-  `steelblue`, numeric colors get the CSS name or hex), so multi-material
-  models open in slicers and CAD viewers with real per-part colors and
-  recognizable names instead of one gray `COMPOUND`. Genuinely overlapping
-  parts are partitioned instead of fused: later children claim contested
-  volume, and each earlier `color()` region keeps its color wherever no
-  later sibling claims the space — `union(color("red") sphere, cube)`
-  yields a red sphere-minus-cube body beside the uncolored cube.
+- **`color()` that survives into STEP export** — colors live on bodies,
+  never on groups. Every operation keeps one invariant: the result is a
+  set of non-overlapping bodies, each with at most one resolved color.
+  `union()` partitions overlapping colored children (a later child claims
+  contested volume; each earlier one keeps its color where nothing later
+  covers it), `difference()` cuts each colored body on its own and keeps
+  its color (cutter colors are ignored), `intersection()` gives shared
+  material the later operand's color when it has one, and `color()` fills
+  whatever is still uncolored without repainting explicit inner colors.
+  `scale()`/`mirror()` carry colors and structure through. `hull()` and
+  `minkowski()` create new material, so they warn and drop the children's
+  colors; an enclosing `color()` still applies. Every part is labeled with
+  the color name you wrote (`color("SteelBlue")` → `steelblue`, numeric
+  colors get the CSS name or hex). `export_step(shape, path)` writes one
+  colored STEP product per body under your own grouping;
+  `export_step(..., group_by_color=True)` buckets the bodies under one
+  group per color instead (plus `uncolored`), which is what slicers read.
   Uncolored models are entirely unaffected.
-- **2D → 3D**: `linear_extrude` (incl. `center`, `scale`; no `twist`),
-  `rotate_extrude` (incl. partial `angle`)
-- **Export**: `scad_render_to_file` writes `.step`/`.stl`; a `.scad`
-  filename is rewritten to `.step` with a warning
-- `solid123d.utils`: `up`, `down`, `left`, `right`, `forward`, `back`
-- **Typing aliases**: `OpenSCADObject` and `OpenSCADObjectPlus` are
-  aliases of `build123d.Shape`, so existing
-  annotations like `def some_obj() -> OpenSCADObject:` remain correct
-## Known differences
 
 - `a * b` intersection is not overloaded; use `a & b` or `intersection()(a, b)`.
 - `hull()` raises `NotImplementedError` outside the closed-form cases

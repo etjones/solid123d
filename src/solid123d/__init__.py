@@ -16,6 +16,7 @@ from ._common import color_label
 # behave identically. Flip the flag off once upstream is fixed.
 occt_workarounds.install()
 from .booleans import difference, hull, intersection, minkowski, union
+from .export import export_step, region_bodies
 from .extrusions import linear_extrude, rotate_extrude
 from .hull import analytic_hull
 from .minkowski import analytic_minkowski
@@ -56,6 +57,7 @@ __all__ = [
     "cube",
     "cylinder",
     "difference",
+    "export_step",
     "hull",
     "intersection",
     "linear_extrude",
@@ -64,6 +66,7 @@ __all__ = [
     "offset",
     "polygon",
     "polyhedron",
+    "region_bodies",
     "resize",
     "rotate",
     "rotate_extrude",

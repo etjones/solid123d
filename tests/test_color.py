@@ -92,12 +92,13 @@ class TestColorGroups:
         inner_blue = s.color("blue")(s.translate([20, 0, 0])(s.sphere(3)))
         outer = s.color("red")(s.cube(10), inner_blue)
         cube, sphere = outer.children
-        assert tuple(outer.color) == pytest.approx((1.0, 0.0, 0.0, 1.0))
-        # The cube has no authored color; build123d resolves it from the
-        # nearest colored ancestor (the red outer group).
-        assert cube._color is None
-        assert tuple(cube.color) == pytest.approx((1.0, 0.0, 0.0, 1.0))
-        assert tuple(sphere.color) == pytest.approx((0.0, 0.0, 1.0, 1.0))
+        # An enclosing color() fills what is still uncolored and leaves
+        # explicit inner colors alone; the group node itself carries no
+        # color, so structure and color stay independent.
+        assert outer._color is None
+        assert tuple(cube._color) == pytest.approx((1.0, 0.0, 0.0, 1.0))
+        assert tuple(sphere._color) == pytest.approx((0.0, 0.0, 1.0, 1.0))
+        assert outer.label == "red" and sphere.label == "blue"
 
     def test_colored_part_keeps_color_outside_an_uncolored_union(self):
         # The motivating example: union(color("red") sphere, cube) keeps

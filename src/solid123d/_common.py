@@ -12,9 +12,16 @@ import warnings
 from collections.abc import Iterable, Sequence
 
 import webcolors
-from build123d import Color, Compound, Shape
+from build123d import Color, Compound, Location, Shape, Solid
+from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+from OCP.TopAbs import TopAbs_COMPOUND, TopAbs_SOLID
+from OCP.TopLoc import TopLoc_Location
+from OCP.TopoDS import TopoDS_Shape
 
 Vec3 = tuple[float, float, float]
+
+# A region body smaller than this is boolean dust, not material.
+VOLUME_EPS = 1e-9
 
 
 def vec3(v: float | Sequence[float], default: float = 0.0) -> Vec3:
@@ -214,3 +221,121 @@ def _partitioned_union(shapes: list[Shape], fused: Shape) -> Shape:
         )
         return fused
     return result
+
+
+# --- color regions -----------------------------------------------------------
+#
+# The invariant every operation preserves: a shape is a tree whose leaves
+# are non-overlapping bodies, each carrying at most one resolved color.
+# Colors live on the leaves, never on the tree -- the tree is structure
+# (what the author grouped), and the exporter may keep it or regroup by
+# color without touching a single body.
+
+
+def own_rgba(shape: Shape) -> tuple | None:
+    """The color set on this very shape, ignoring inheritance."""
+    return tuple(shape._color) if shape._color is not None else None
+
+
+def total_volume(shape: Shape) -> float:
+    """Volume of every solid under *shape*. Not ``shape.volume``: build123d's
+    ``Compound.volume`` sums only the compound's direct Solid children, so
+    a nested tree undercounts."""
+    return sum(s.volume for s in shape.solids())
+
+
+def world_leaves(shape: Shape) -> list[Shape]:
+    """The leaf bodies of *shape*'s tree, each a copy placed in world
+    coordinates with its resolved color and label.
+
+    A moved Compound carries the move on itself; its children stay in the
+    frame they were built in. Booleans against other shapes need world
+    coordinates, so ancestor locations are composed onto each leaf here.
+    """
+    out: list[Shape] = []
+
+    def walk(node: Shape, acc: Location) -> None:
+        if node.children:
+            here = acc * node.location
+            for child in node.children:
+                walk(child, here)
+            return
+        leaf = node.moved(acc)
+        out.append(_recolored(leaf, _rgba(node), node.label))
+
+    walk(shape, Location())
+    return out
+
+
+def fill_color(shape: Shape, color: Color, label: str) -> Shape:
+    """Give *color* to every leaf body that has none. Explicit inner
+    colors survive; the tree itself stays uncolored."""
+    if shape.children:
+        for child in shape.children:
+            fill_color(child, color, label)
+        if not shape.label:
+            shape.label = label
+        return shape
+    if shape._color is None:
+        shape.color = color
+        if not shape.label:
+            shape.label = label
+    return shape
+
+
+def assemble(bodies: list[Shape], label: str = "") -> Shape:
+    """One body is itself; several become a flat tree of separate bodies."""
+    if len(bodies) == 1:
+        return bodies[0]
+    result = Compound(children=bodies)
+    if label:
+        result.label = label
+    return result
+
+
+def checked(bodies: list[Shape], plain: Shape, operation: str) -> Shape:
+    """The color-preserving result of *operation*, or the plain boolean
+    result when the pieces do not add up to it: correct geometry beats
+    color fidelity, and the substitution is announced, never silent."""
+    if not bodies:
+        return plain
+    result = assemble(bodies)
+    if not math.isclose(
+        total_volume(result), total_volume(plain), rel_tol=1e-6, abs_tol=VOLUME_EPS
+    ):
+        warnings.warn(
+            f"solid123d: color-preserving {operation} lost volume to a boolean "
+            "glitch; returning the plain result without colors",
+            stacklevel=4,
+        )
+        return plain
+    return result
+
+
+def baked_topods(shape: TopoDS_Shape) -> TopoDS_Shape:
+    """The shape with its Location applied to the geometry itself.
+
+    build123d's scale() leaves a shape's Location alone, so a moved body
+    would scale about the wrong point; OCCT's STEP writer cannot attach
+    layers to a located shape. A placed copy has neither problem."""
+    loc = shape.Location()
+    if loc.IsIdentity():
+        return shape
+    return BRepBuilderAPI_Transform(
+        shape.Located(TopLoc_Location()), loc.Transformation(), True
+    ).Shape()
+
+
+def baked(shape: Shape) -> Shape:
+    """*shape* as a copy whose geometry carries its placement."""
+    if shape.wrapped is None or shape.wrapped.Location().IsIdentity():
+        return shape
+    placed = baked_topods(shape.wrapped)
+    kind = placed.ShapeType()
+    if kind == TopAbs_SOLID:
+        out: Shape = Solid(placed)
+    elif kind == TopAbs_COMPOUND:
+        out = Compound(placed)
+    else:
+        out = Shape.cast(placed)
+    return _recolored(out, own_rgba(shape) or _rgba(shape), shape.label)

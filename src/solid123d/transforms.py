@@ -7,12 +7,21 @@ a transformed build123d shape.
 
 from collections.abc import Callable, Sequence
 
-from build123d import Axis, Color, Kind, Plane, Pos, Shape
+from build123d import Axis, Color, Compound, Kind, Location, Plane, Pos, Shape
 from build123d import mirror as _bd_mirror
 from build123d import offset as _bd_offset
 from build123d import scale as _bd_scale
 
-from ._common import color_label, group, vec3
+from ._common import (
+    _carries_color,
+    _recolored,
+    _rgba,
+    baked,
+    color_label,
+    fill_color,
+    group,
+    vec3,
+)
 
 Applier = Callable[..., Shape]
 
@@ -47,21 +56,43 @@ def rotate(
     return apply
 
 
+def _map_bodies(shape: Shape, fn: Callable[[Shape], Shape]) -> Shape:
+    """Apply a geometry-rebuilding transform to every leaf body in world
+    coordinates, keeping the tree, each body's color, and labels.
+
+    build123d's scale() and mirror() return a fresh shape with no
+    children and no color; a colored tree would come out one grey lump.
+    Translation and rotation only change a Location and need none of this.
+    """
+    if not _carries_color(shape):
+        return fn(shape)
+
+    def walk(node: Shape, acc: Location) -> Shape:
+        if node.children:
+            here = acc * node.location
+            out = Compound(children=[walk(child, here) for child in node.children])
+            out.label = node.label
+            return out
+        return _recolored(fn(baked(node.moved(acc))), _rgba(node), node.label)
+
+    return walk(shape, Location())
+
+
 def scale(v: float | Sequence[float]) -> Applier:
     # OpenSCAD pads a short scale vector with 1 (identity), not 0
     factors = vec3(v, default=1.0)
 
     def apply(*children: Shape) -> Shape:
-        return _bd_scale(group(children), by=factors)
+        return _map_bodies(group(children), lambda s: _bd_scale(s, by=factors))
 
     return apply
 
 
 def mirror(v: Sequence[float]) -> Applier:
-    normal = vec3(v)
+    plane = Plane(origin=(0, 0, 0), z_dir=vec3(v))
 
     def apply(*children: Shape) -> Shape:
-        return _bd_mirror(group(children), about=Plane(origin=(0, 0, 0), z_dir=normal))
+        return _map_bodies(group(children), lambda s: _bd_mirror(s, about=plane))
 
     return apply
 
@@ -82,7 +113,7 @@ def resize(
         resolved = tuple(
             f if f != 0 else (first if autos[i] else 1.0) for i, f in enumerate(factors)
         )
-        return _bd_scale(shape, by=resolved)
+        return _map_bodies(shape, lambda s: _bd_scale(s, by=resolved))
 
     return apply
 
@@ -102,11 +133,10 @@ def color(c: str | Sequence[float], alpha: float = 1.0) -> Applier:
         label = color_label(vals)
 
     def apply(*children: Shape) -> Shape:
-        shape = group(children)
-        shape.color = col
-        if not shape.label:
-            shape.label = label
-        return shape
+        # A fill, not a repaint: the enclosed model's own color() calls have
+        # already resolved onto its bodies; this color goes to whatever is
+        # still uncolored, and the tree itself carries no color at all.
+        return fill_color(group(children), col, label)
 
     return apply
 
