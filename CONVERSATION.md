@@ -406,3 +406,12 @@ tests need updating at its version bump.
 process-wide, canary-tested) + color-partitioning union. Minor-version
 bump because overlapping-colored-union semantics visibly change
 (partition instead of fuse-with-first-color).
+
+**User** (via scad123d): an oval prism from `hull()` of two lifted
+cylinders lands in the wrong place in the STEP (CodeCAD 0586843_0).
+
+**Assistant**: `_hull_of_cylinders` placed the stadium at whichever cap
+face OCCT listed first and extruded along the placed face's normal; from
+a top cap that goes up (z 16..28 instead of 4..16). Volume was right, so
+the volume-only tests never caught it. Fix: `extrude(dir=dir0)` along the
+shared axis; test now asserts the z-span. PR #14.
