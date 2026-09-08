@@ -92,16 +92,18 @@ class TestColorGroups:
         inner_blue = s.color("blue")(s.translate([20, 0, 0])(s.sphere(3)))
         outer = s.color("red")(s.cube(10), inner_blue)
         cube, sphere = outer.children
-        assert tuple(outer.color) == pytest.approx((1.0, 0.0, 0.0, 1.0))
-        # The cube has no authored color; build123d resolves it from the
-        # nearest colored ancestor (the red outer group).
-        assert cube._color is None
-        assert tuple(cube.color) == pytest.approx((1.0, 0.0, 0.0, 1.0))
-        assert tuple(sphere.color) == pytest.approx((0.0, 0.0, 1.0, 1.0))
+        # An enclosing color() fills what is still uncolored and leaves
+        # explicit inner colors alone; the group node itself carries no
+        # color, so structure and color stay independent.
+        assert outer._color is None
+        assert tuple(cube._color) == pytest.approx((1.0, 0.0, 0.0, 1.0))
+        assert tuple(sphere._color) == pytest.approx((0.0, 0.0, 1.0, 1.0))
+        assert outer.label == "red" and sphere.label == "blue"
 
-    def test_colored_part_keeps_color_outside_an_uncolored_union(self):
-        # The motivating example: union(color("red") sphere, cube) keeps
-        # the sphere red wherever the cube doesn't claim the space.
+    def test_an_assigned_color_beats_a_later_uncolored_child(self):
+        # The motivating example, under the settled precedence: an
+        # assigned color wins over uncolored material, so the red sphere
+        # stays whole and the uncolored cube keeps only what is left.
         u = s.union()(
             s.color("red")(s.sphere(5)),
             s.cube(8, center=True),
@@ -110,22 +112,33 @@ class TestColorGroups:
         sphere_vol = 4 / 3 * math.pi * 125
         overlap = (s.sphere(5) & s.cube(8, center=True)).volume
         assert red.label == "red"
-        assert red.volume == pytest.approx(sphere_vol - overlap, rel=1e-6)
+        assert red.volume == pytest.approx(sphere_vol, rel=1e-6)
         assert base._color is None
-        assert base.volume == pytest.approx(512, rel=1e-9)
-        assert u.volume == pytest.approx(sphere_vol - overlap + 512, rel=1e-6)
+        assert base.volume == pytest.approx(512 - overlap, rel=1e-6)
+        assert u.volume == pytest.approx(sphere_vol + 512 - overlap, rel=1e-6)
 
-    def test_overlap_goes_to_the_later_child(self):
-        # Reversed order: the colored sphere is later, so the contested
-        # volume is red and the cube gets clipped.
+    def test_between_two_assigned_colors_the_later_child_wins(self):
+        u = s.union()(
+            s.color("blue")(s.cube(8, center=True)),
+            s.color("red")(s.sphere(5)),
+        )
+        blue, red = u.children
+        sphere_vol = 4 / 3 * math.pi * 125
+        assert red.volume == pytest.approx(sphere_vol, rel=1e-6)
+        assert blue.volume < 512
+
+    def test_order_of_a_colored_child_does_not_matter_against_uncolored(self):
+        # Same two bodies, colored child second: precedence is the color's,
+        # not the position's, so the result is the same either way.
         u = s.union()(
             s.cube(8, center=True),
             s.color("red")(s.sphere(5)),
         )
         base, red = u.children
         sphere_vol = 4 / 3 * math.pi * 125
+        overlap = (s.sphere(5) & s.cube(8, center=True)).volume
         assert red.volume == pytest.approx(sphere_vol, rel=1e-6)
-        assert base.volume < 512
+        assert base.volume == pytest.approx(512 - overlap, rel=1e-6)
 
     def test_fully_covered_child_disappears(self):
         u = s.union()(
@@ -148,16 +161,18 @@ class TestColorGroups:
         assert red.label == "red"
         assert blue.label == "blue"
 
-    def test_three_way_mixed_partition(self):
+    def test_uncolored_material_between_two_colors_is_claimed_by_both(self):
+        # red x0..10, uncolored x5..15, blue x10..20. Both colors keep
+        # their whole extent; the uncolored body is left with nothing, and
+        # the total is unchanged.
         u = s.union()(
             s.color("red")(s.cube(10)),
             s.translate([5, 0, 0])(s.cube(10)),
             s.color("blue")(s.translate([10, 0, 0])(s.cube(10))),
         )
-        red, base, blue = u.children
+        red, blue = u.children
         assert (red.label, blue.label) == ("red", "blue")
-        assert red.volume == pytest.approx(500, rel=1e-9)  # clipped by base
-        assert base.volume == pytest.approx(500, rel=1e-9)  # clipped by blue
+        assert red.volume == pytest.approx(1000, rel=1e-9)
         assert blue.volume == pytest.approx(1000, rel=1e-9)
         assert u.volume == pytest.approx(2000, rel=1e-9)
 

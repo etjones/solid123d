@@ -9,8 +9,9 @@ import warnings
 from pathlib import Path
 
 from build123d import Shape
-from build123d import export_step as _export_step
 from build123d import export_stl as _export_stl
+
+from .export import export_step as _export_step
 
 
 def scad_render_to_file(
