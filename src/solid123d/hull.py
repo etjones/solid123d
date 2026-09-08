@@ -433,10 +433,13 @@ def _hull_of_cylinders(shapes: list[Shape]) -> Shape | None:
     # plane.origin is a0, i.e. t=0 on the shared axis; span[0] is always 0 by
     # construction (span is seeded from classified[0], whose own t_a is 0
     # relative to itself), so placing the extrusion at `plane` with no
-    # further offset lands exactly on the shared span's start.
+    # further offset lands exactly on the shared span's start. The direction
+    # is passed explicitly: a0 is whichever cap OCCT listed first, and the
+    # placed face's own normal does not reliably follow the plane's z_dir,
+    # so extruding "along the face" from a top cap goes the wrong way.
     placed = plane * face2d
     try:
-        result = extrude(placed, amount=span[1] - span[0])
+        result = extrude(placed, amount=span[1] - span[0], dir=Vector(*dir0))
     except Exception:  # noqa: BLE001
         return None
     return result if result is not None and result.is_valid else None
