@@ -110,8 +110,10 @@ def _add_body(
     if body.rgba is not None:
         r, g, b, a = (*body.rgba, 1.0)[:4] if len(body.rgba) == 3 else body.rgba
         rgba = Quantity_ColorRGBA(r, g, b, a)
-        # Generic is the body color solids carry; a sheet (2D geometry) only
-        # round-trips a surface color, so both are set.
+        # Generic is what a solid carries and what CAD importers read off
+        # the body. A sheet (2D geometry) has no volume to color, so OCCT
+        # writes its color as a face style instead and reads it back on a
+        # subshape label -- setting both is what makes 2D round-trip.
         colors.SetColor(part, rgba, XCAFDoc_ColorGen)
         colors.SetColor(part, rgba, XCAFDoc_ColorSurf)
     if parent is not None:

@@ -13,6 +13,7 @@ from collections.abc import Iterable, Sequence
 
 import webcolors
 from build123d import Color, Compound, Location, Shape, Solid
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
 from OCP.TopAbs import TopAbs_COMPOUND, TopAbs_SOLID
 from OCP.TopLoc import TopLoc_Location
@@ -131,8 +132,8 @@ def group(children: Iterable[object]) -> Shape:
     # child's own .color -- a flat Compound with no parent/child tree is
     # treated as one leaf and gets a single color splashed across every
     # solid inside it instead.
-    total_volume = sum(s.volume for s in shapes)
-    if math.isclose(fused.volume, total_volume, rel_tol=1e-9, abs_tol=1e-9):
+    naive_total = sum(total_volume(s) for s in shapes)
+    if math.isclose(total_volume(fused), naive_total, rel_tol=1e-9, abs_tol=1e-9):
         return Compound(children=list(shapes))
 
     # Real overlap: partition instead of fusing. Later children claim
@@ -174,62 +175,66 @@ def _recolored(shape: Shape, rgba: tuple | None, label: str) -> Shape:
 def _partitioned_union(shapes: list[Shape], fused: Shape) -> Shape:
     """Union overlapping children as touching bodies, colors intact.
 
-    Precedence rule: a ``color()`` region keeps its color wherever no
-    later sibling claims the space -- later children clip earlier ones,
-    and the last child always survives whole. Runs of adjacent
-    same-colored children are fused first, so plain OpenSCAD idioms (a
-    union of many uncolored or identically-colored parts) still produce
-    a single merged solid per color run.
+    Precedence, as the project settled it: an assigned color wins over
+    uncolored material, and between two assigned colors the later operand
+    wins. It affects only the contested material -- never the rest of
+    either body -- so each body keeps its color on everything that no
+    higher-priority body claims. A red sphere therefore stays whole under
+    a later *uncolored* cube, while a later *blue* cube would take the
+    shared material.
 
-    The accumulated fuse of all children is the ground truth for
-    volume. If partitioning ever loses material, that fuse is returned
-    instead: correct geometry beats color fidelity.
+    Runs of one color that nothing else separates are fused first, so a
+    plain OpenSCAD idiom (a union of many uncolored or identically colored
+    parts) still yields one merged solid per color. If partitioning ever
+    loses material, the plain fuse is returned instead: correct geometry
+    beats color fidelity, and the substitution is announced, never silent.
     """
     leaves = _color_leaves(shapes)
+    # Ascending priority: uncolored bodies first (in source order), then
+    # colored ones (in source order). The sweep below runs from the top
+    # down, so each body is cut by everything that outranks it.
+    ordered = sorted(
+        enumerate(leaves), key=lambda pair: (_rgba(pair[1]) is not None, pair[0])
+    )
 
-    coalesced: list[Shape] = []
-    for shape in leaves:
-        if coalesced and _rgba(coalesced[-1]) == _rgba(shape):
-            prev = coalesced[-1]
-            coalesced[-1] = _recolored(prev + shape, _rgba(prev), prev.label)
+    runs: list[tuple[int, Shape]] = []
+    for index, shape in ordered:
+        if runs and _rgba(runs[-1][1]) == _rgba(shape):
+            first, prev = runs[-1]
+            runs[-1] = (first, _recolored(prev + shape, _rgba(prev), prev.label))
         else:
-            coalesced.append(shape)
-    if len(coalesced) == 1:
-        return coalesced[0]
+            runs.append((index, shape))
+    if len(runs) == 1:
+        return runs[0][1]
 
-    kept: list[Shape] = []
-    later: Shape | None = None
-    for shape in reversed(coalesced):
-        if later is None:
-            kept.append(shape)
-            later = shape
-        else:
-            clipped = shape - later
-            if clipped.volume > 1e-9:
-                kept.append(_recolored(clipped, _rgba(shape), shape.label))
-            later = later + shape
-    kept.reverse()
-
-    if len(kept) == 1:
-        return kept[0]
-    result = Compound(children=kept)
-    if not math.isclose(result.volume, later.volume, rel_tol=1e-6):
-        warnings.warn(
-            "solid123d: color-preserving union lost volume to a boolean "
-            "glitch; returning the plain fused solid without colors",
-            stacklevel=3,
-        )
-        return fused
-    return result
+    kept: list[tuple[int, Shape]] = []
+    higher: list[Shape] = []
+    for index, shape in reversed(runs):
+        piece = boolean([shape], higher, BRepAlgoAPI_Cut()) if higher else shape
+        if total_volume(piece) > VOLUME_EPS:
+            kept.append((index, _recolored(piece, _rgba(shape), shape.label)))
+        higher.append(shape)
+    # Ownership followed priority; the tree keeps the author's order.
+    bodies = [shape for _, shape in sorted(kept, key=lambda pair: pair[0])]
+    return checked(bodies, fused, "union")
 
 
-# --- color regions -----------------------------------------------------------
-#
-# The invariant every operation preserves: a shape is a tree whose leaves
-# are non-overlapping bodies, each carrying at most one resolved color.
-# Colors live on the leaves, never on the tree -- the tree is structure
-# (what the author grouped), and the exporter may keep it or regroup by
-# color without touching a single body.
+def boolean(args: list[Shape], tools: list[Shape], operation) -> Shape:
+    """A boolean with every body passed as its own argument.
+
+    OCCT does not accept a compound of touching or overlapping solids as a
+    single boolean argument: the operation reports success and hands back
+    the input unchanged. Splitting to solids is what makes the general
+    case work, and the plain result of this is the ground truth that the
+    color-preserving results are checked against.
+    """
+    flat_args = [solid for arg in args for solid in (arg.solids() or [arg])]
+    flat_tools = [solid for tool in tools for solid in (tool.solids() or [tool])]
+    if not flat_args:
+        raise ValueError("a boolean needs at least one argument")
+    if not flat_tools:
+        return assemble(flat_args)
+    return flat_args[0]._bool_op(flat_args, flat_tools, operation)
 
 
 def own_rgba(shape: Shape) -> tuple | None:

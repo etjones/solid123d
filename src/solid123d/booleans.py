@@ -23,6 +23,7 @@ from ._common import (
     VOLUME_EPS,
     _carries_color,
     _recolored,
+    boolean,
     checked,
     flatten,
     group,
@@ -60,16 +61,6 @@ def difference() -> Applier:
     return apply
 
 
-def _plain(args: list[Shape], tools: list[Shape], operation) -> Shape:
-    """The uncolored boolean over region bodies, every body its own
-    argument. A Compound of touching or overlapping solids is not a valid
-    single argument to OCCT -- the operation reports success and returns
-    the input unchanged -- but the same solids passed as separate arguments
-    go through the general fuse, which resolves them. This is the ground
-    truth the colored results are checked against."""
-    return args[0]._bool_op(args, tools, operation)
-
-
 def _cut_regions(base: Shape, cutters: list[Shape]) -> Shape:
     """Difference that keeps the retained material's colors.
 
@@ -77,10 +68,10 @@ def _cut_regions(base: Shape, cutters: list[Shape]) -> Shape:
     the cutters' colors are irrelevant (a cutter is a hole, not material).
     """
     regions = world_leaves(base)
-    plain = _plain(regions, cutters, BRepAlgoAPI_Cut())
+    plain = boolean(regions, cutters, BRepAlgoAPI_Cut())
     kept: list[Shape] = []
     for region in regions:
-        piece = region.cut(*cutters)
+        piece = boolean([region], cutters, BRepAlgoAPI_Cut())
         if total_volume(piece) > VOLUME_EPS:
             kept.append(_recolored(piece, own_rgba(region), region.label))
     return checked(kept, plain, "difference")
@@ -105,13 +96,13 @@ def _intersect_regions(shapes: list[Shape]) -> Shape:
     plain: Shape | None = None
     for other in shapes[1:]:
         others = world_leaves(other)
-        plain = _plain(
+        plain = boolean(
             world_leaves(plain) if plain else current, others, BRepAlgoAPI_Common()
         )
         following: list[Shape] = []
         for a in current:
             for b in others:
-                piece = a & b
+                piece = boolean([a], [b], BRepAlgoAPI_Common())
                 if total_volume(piece) <= VOLUME_EPS:
                     continue
                 winner = b if own_rgba(b) is not None else a

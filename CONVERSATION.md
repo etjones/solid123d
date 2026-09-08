@@ -439,3 +439,17 @@ solid exported as a free shape. `occt_workarounds`: the common-volume
 bound is now group-wise (sum of args vs sum of tools). Tests:
 test_regions.py (18), test_export.py (9); one old test updated to the
 fill semantics; 183 pass.
+
+**Assistant** (continued): a smoke test on a two-material lid caught
+`union()` violating the agreed precedence: the shell measured 2384
+instead of 2400 because a later *uncolored* cube took the overlap. That is
+"later always wins", the option the project explicitly rejected in favour
+of "an assigned color wins over uncolored material". Fixed by ordering the
+partition sweep by priority -- (has a color, source index) ascending, each
+body cut by everything that outranks it -- instead of by source position;
+the output tree keeps the author's order. Two old tests encoded the
+rejected rule and were rewritten, and the full contract table is now
+pinned in test_regions.py (six rows plus volume conservation). Also
+consolidated one `boolean()` helper in `_common` that passes every body as
+its own OCCT argument, and fixed a local variable in `group()` that
+shadowed the module-level `total_volume()`. 214 tests pass.

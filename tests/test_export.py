@@ -36,6 +36,31 @@ def _volume(shape) -> float:
     return round(props.Mass(), 6)
 
 
+def _color_of(label: TDF_Label, shapes, colors) -> tuple | None:
+    """A body's color as the reader stored it.
+
+    A solid's color comes back on its own label. A sheet's (2D geometry)
+    comes back as a surface style on its face, which the reader files
+    under a subshape label -- so look there too before giving up.
+    """
+    candidates = [label]
+    subs = TDF_LabelSequence()
+    XCAFDoc_ShapeTool.GetSubShapes_s(label, subs)
+    candidates += [subs.Value(i) for i in range(1, subs.Length() + 1)]
+    color = Quantity_ColorRGBA()
+    for candidate in candidates:
+        for kind in (XCAFDoc_ColorGen, XCAFDoc_ColorSurf):
+            if XCAFDoc_ColorTool.GetColor_s(candidate, kind, color):
+                rgb = color.GetRGB()
+                return (
+                    round(rgb.Red(), 6),
+                    round(rgb.Green(), 6),
+                    round(rgb.Blue(), 6),
+                    round(color.Alpha(), 6),
+                )
+    return None
+
+
 def _name(label: TDF_Label) -> str:
     attr = TDataStd_Name()
     if label.FindAttribute(TDataStd_Name.GetID_s(), attr):
@@ -56,6 +81,7 @@ def read_step(path: Path) -> list[tuple[tuple[str, ...], tuple | None, float]]:
     assert reader.ReadFile(str(path)) == 1
     assert reader.Transfer(doc)
     shapes = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    colors = XCAFDoc_DocumentTool.ColorTool_s(doc.Main())
     out: list[tuple[tuple[str, ...], tuple | None, float]] = []
 
     def walk(label: TDF_Label, names: tuple[str, ...]) -> None:
@@ -71,18 +97,7 @@ def read_step(path: Path) -> list[tuple[tuple[str, ...], tuple | None, float]]:
             for i in range(1, components.Length() + 1):
                 walk(components.Value(i), names)
             return
-        color = Quantity_ColorRGBA()
-        rgba = None
-        for kind in (XCAFDoc_ColorGen, XCAFDoc_ColorSurf):
-            if XCAFDoc_ColorTool.GetColor_s(target, kind, color):
-                rgb = color.GetRGB()
-                rgba = (
-                    round(rgb.Red(), 6),
-                    round(rgb.Green(), 6),
-                    round(rgb.Blue(), 6),
-                    round(color.Alpha(), 6),
-                )
-                break
+        rgba = _color_of(target, shapes, colors)
         out.append((names, rgba, _volume(XCAFDoc_ShapeTool.GetShape_s(label))))
 
     free = TDF_LabelSequence()

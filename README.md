@@ -64,9 +64,12 @@ part = fillet(part.edges(), radius=2)  # native build123d from here on
 - **`color()` that survives into STEP export** — colors live on bodies,
   never on groups. Every operation keeps one invariant: the result is a
   set of non-overlapping bodies, each with at most one resolved color.
-  `union()` partitions overlapping colored children (a later child claims
-  contested volume; each earlier one keeps its color where nothing later
-  covers it), `difference()` cuts each colored body on its own and keeps
+  Precedence for contested material: an assigned color beats uncolored
+  material, and between two assigned colors the later operand wins — so a
+  red sphere stays whole under a later *uncolored* cube, while a later
+  *blue* cube would take the shared material.
+  `union()` partitions overlapping colored children accordingly,
+  `difference()` cuts each colored body on its own and keeps
   its color (cutter colors are ignored), `intersection()` gives shared
   material the later operand's color when it has one, and `color()` fills
   whatever is still uncolored without repainting explicit inner colors.

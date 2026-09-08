@@ -172,3 +172,57 @@ def test_volumes_never_change_through_a_colored_pipeline():
     assert math.isclose(total_volume(model), plain.volume, rel_tol=1e-9)
     colors = {tuple(round(v, 3) for v in rgba) for rgba, _ in bodies(model)}
     assert colors == {RED, BLUE, (0.0, 0.502, 0.0, 1.0)}
+
+
+class TestAgreedContract:
+    """The precedence table the project settled on, row by row.
+
+    A is a 10-cube at the origin, B the same cube shifted 5 in x: 500 of
+    A-only, 500 shared, 500 of B-only. Every row asserts the whole
+    partition, so a rule that moved material to the wrong body fails even
+    though the total is right.
+    """
+
+    @staticmethod
+    def a():
+        return s.cube(10)
+
+    @staticmethod
+    def b():
+        return s.translate([5, 0, 0])(s.cube(10))
+
+    def test_red_a_union_uncolored_b(self):
+        u = s.union()(s.color("red")(self.a()), self.b())
+        assert bodies(u) == [(None, 500.0), (RED, 1000.0)]
+
+    def test_red_a_union_blue_b(self):
+        u = s.union()(s.color("red")(self.a()), s.color("blue")(self.b()))
+        assert bodies(u) == [(BLUE, 1000.0), (RED, 500.0)]
+
+    def test_blue_b_union_red_a(self):
+        u = s.union()(s.color("blue")(self.b()), s.color("red")(self.a()))
+        assert bodies(u) == [(BLUE, 500.0), (RED, 1000.0)]
+
+    def test_red_a_intersect_uncolored_b(self):
+        i = s.intersection()(s.color("red")(self.a()), self.b())
+        assert bodies(i) == [(RED, 500.0)]
+
+    def test_red_a_intersect_blue_b(self):
+        i = s.intersection()(s.color("red")(self.a()), s.color("blue")(self.b()))
+        assert bodies(i) == [(BLUE, 500.0)]
+
+    def test_red_a_minus_blue_b(self):
+        d = s.difference()(s.color("red")(self.a()), s.color("blue")(self.b()))
+        assert bodies(d) == [(RED, 500.0)]
+
+    def test_every_row_conserves_total_volume(self):
+        for result, expected in (
+            (s.union()(s.color("red")(self.a()), self.b()), 1500.0),
+            (s.union()(s.color("red")(self.a()), s.color("blue")(self.b())), 1500.0),
+            (s.intersection()(s.color("red")(self.a()), self.b()), 500.0),
+            (
+                s.difference()(s.color("red")(self.a()), s.color("blue")(self.b())),
+                500.0,
+            ),
+        ):
+            assert total_volume(result) == pytest.approx(expected, rel=1e-9)
