@@ -472,6 +472,20 @@ class TestHullGroupedChildren:
         expected = (400 + 4 * 2 * 20 + math.pi * 4) * 10
         assert shape.volume == pytest.approx(expected, rel=1e-9)
 
+    def test_hull_of_lifted_cylinder_pair_stays_on_their_span(self):
+        """Two equal cylinders both translated up: the stadium prism must
+        occupy their z-span, not extrude away from whichever cap OCCT
+        happened to list first. A headset hanger's oval boss came out at
+        z 16..28 instead of 4..16 -- right volume, wrong place."""
+        shape = s.hull()(
+            s.translate([40, 14, 4])(s.cylinder(r=6, h=12)),
+            s.translate([44, 6, 4])(s.cylinder(r=6, h=12)),
+        )
+        bb = shape.bounding_box()
+        assert (bb.min.Z, bb.max.Z) == pytest.approx((4, 16), abs=1e-6)
+        expected = (math.pi * 36 + 2 * 6 * math.hypot(4, 8)) * 12
+        assert shape.volume == pytest.approx(expected, rel=1e-9)
+
     def test_hull_of_prefused_sphere_pair_is_the_tangent_cone_hull(self):
         pair = s.union()(s.sphere(3), s.translate([14, 0, 0])(s.sphere(5)))
         shape = s.hull()(pair)
