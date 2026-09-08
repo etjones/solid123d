@@ -171,3 +171,13 @@ def test_alpha_survives(tmp_path):
 def test_render_uses_the_body_exporter(tmp_path):
     out = s.scad_render_to_file(red_blue_overlap(), tmp_path / "r.step")
     assert len(read_step(Path(out))) == 2
+
+
+def test_two_d_geometry_exports_as_a_sheet(tmp_path):
+    from build123d import import_step
+
+    path = export_step(s.color("red")(s.square(10)), tmp_path / "flat.step")
+    imported = import_step(str(path))
+    assert not imported.solids()
+    assert sum(f.area for f in imported.faces()) == pytest.approx(100)
+    assert read_step(path) == [(("red",), RED, 0.0)]

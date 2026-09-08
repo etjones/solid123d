@@ -33,6 +33,7 @@ from OCP.TopoDS import TopoDS_Shape
 from OCP.XCAFApp import XCAFApp_Application
 from OCP.XCAFDoc import (
     XCAFDoc_ColorGen,
+    XCAFDoc_ColorSurf,
     XCAFDoc_ColorTool,
     XCAFDoc_DocumentTool,
     XCAFDoc_ShapeTool,
@@ -76,8 +77,11 @@ def region_bodies(shape: Shape) -> list[Body]:
         placed = node.moved(acc)
         rgba = _rgba(node)
         label = node.label or (color_label(rgba) if rgba else "solid")
-        for solid in placed.solids():
-            bodies.append(Body(baked_topods(solid.wrapped), rgba, label))
+        # A 2D leaf (a sketch, an unextruded profile) has no solids; it is
+        # exported whole, as the sheet it is.
+        pieces = placed.solids() or [placed]
+        for piece in pieces:
+            bodies.append(Body(baked_topods(piece.wrapped), rgba, label))
 
     walk(shape, Location())
     return bodies
@@ -105,7 +109,11 @@ def _add_body(
     _name(part, body.label)
     if body.rgba is not None:
         r, g, b, a = (*body.rgba, 1.0)[:4] if len(body.rgba) == 3 else body.rgba
-        colors.SetColor(part, Quantity_ColorRGBA(r, g, b, a), XCAFDoc_ColorGen)
+        rgba = Quantity_ColorRGBA(r, g, b, a)
+        # Generic is the body color solids carry; a sheet (2D geometry) only
+        # round-trips a surface color, so both are set.
+        colors.SetColor(part, rgba, XCAFDoc_ColorGen)
+        colors.SetColor(part, rgba, XCAFDoc_ColorSurf)
     if parent is not None:
         shapes.AddComponent(parent, part, TopLoc_Location())
     return part
@@ -175,8 +183,8 @@ def export_step(
     colors = XCAFDoc_DocumentTool.ColorTool_s(doc.Main())
 
     bodies = region_bodies(shape)
-    if not bodies:
-        raise ValueError("nothing to export: the shape has no solids")
+    if not bodies or shape.wrapped is None:
+        raise ValueError("nothing to export: the shape is empty")
     if len(bodies) == 1 and not (group_by_color or shape.children):
         _add_body(shapes, colors, None, bodies[0])
     else:
