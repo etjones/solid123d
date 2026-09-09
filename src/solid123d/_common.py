@@ -24,6 +24,20 @@ Vec3 = tuple[float, float, float]
 # A region body smaller than this is boolean dust, not material.
 VOLUME_EPS = 1e-9
 
+# OCCT's fuzzy tolerance for cuts, in model units: 10 nm, which recovers
+# the sphere in cut_all's docstring while moving nothing real. Matches the
+# retry value in occt_workarounds.
+CUT_FUZZ = 1e-5
+
+# How close to its argument's own size a cut's result must be to count as
+# having removed nothing. The two are integrated over different face sets
+# -- a failed cut returns the argument split into several solids, slivers
+# included -- which alone differs by 1e-8 to 2e-7 relative on real results
+# (measured for CLEAN_VOLUME_RTOL in occt_workarounds). A cut that
+# genuinely removes less than this is no worse off: the fold is adopted
+# only when it removes more than the single pass did.
+CUT_NOOP_RTOL = 1e-6
+
 
 def vec3(v: float | Sequence[float], default: float = 0.0) -> Vec3:
     """Expand an OpenSCAD-style scalar or vector into an (x, y, z) tuple."""
@@ -280,35 +294,52 @@ def extent(shape: Shape) -> float:
     return sum(abs(face.area) for face in shape.faces())
 
 
+def _cut(args: list[Shape], tools: list[Shape]) -> Shape:
+    """One cut, always with a fuzzy tolerance. See ``cut_all``."""
+    operation = BRepAlgoAPI_Cut()
+    operation.SetFuzzyValue(CUT_FUZZ)
+    return boolean(args, tools, operation)
+
+
+def _removed_nothing(result: Shape, before: float) -> bool:
+    return math.isclose(
+        extent(result), before, rel_tol=CUT_NOOP_RTOL, abs_tol=VOLUME_EPS
+    )
+
+
 def cut_all(args: list[Shape], tools: list[Shape]) -> Shape:
-    """Cut by every tool in one OCCT pass, folding instead when that pass
-    silently does nothing.
+    """Cut by every tool, around two OCCT defects that each leave behind
+    material the cut was asked to remove.
 
-    One of four OCCT workarounds; see ``occt_workarounds`` for the map.
+    *The exact algorithm keeps a piece it should have discarded.* A sphere
+    of r=109.659 cut by a box covering its lower half came back as four
+    solids: the correct cap, the entire lower part, and two zero-volume
+    slivers along the seam. The same geometry at r=10 is fine, so it is a
+    tolerance failure, and OCCT's fuzzy mode gets it right. Every cut is
+    therefore fuzzy: at 1e-5 mm nothing real moves on a millimetre-scale
+    model, and it costs no extra operation.
 
-    One N-ary Cut is much cheaper than a fold -- a single pass over the
-    argument rather than one per tool -- and it is what keeps a model with
-    many subtrahends from crawling. But OCCT can hand the argument back
-    untouched: found on a model whose five tools included a cone, where
-    four cut correctly and adding the fifth returned the minuend
-    unchanged, while folding the same five removed 99.9% of it. The
-    plausibility guard cannot see this, since a cut that removes nothing
-    is legitimate whenever the tools miss the argument.
+    *One Cut taking every subtrahend at once returns the argument
+    untouched.* Seen with five tools where any four of them cut correctly.
+    Fuzzy does not help here; folding tool by tool does. Since a cut whose
+    tools miss removes nothing quite legitimately, the fold is tried only
+    when the single pass removed nothing, and kept only if it removed
+    something -- so a genuine miss costs one fold and the same answer.
 
-    So the fold is tried only when the fast path removed *exactly* nothing,
-    and its result is adopted only if it removed something -- which means a
-    genuine miss still costs one wasted fold and returns the same answer.
+    Neither defect is caught by the plausibility guard in
+    ``occt_workarounds``: the most a cut may remove is everything, so the
+    bound it checks against is the argument's own volume.
     """
-    at_once = boolean(args, tools, BRepAlgoAPI_Cut())
+    at_once = _cut(args, tools)
     if len(tools) < 2:
         return at_once
     before = sum(extent(arg) for arg in args)
-    if not math.isclose(extent(at_once), before, rel_tol=1e-12, abs_tol=VOLUME_EPS):
+    if not _removed_nothing(at_once, before):
         return at_once
-    folded = at_once
-    for index, tool in enumerate(tools):
-        folded = boolean([folded] if index else args, [tool], BRepAlgoAPI_Cut())
-    return folded if extent(folded) < before else at_once
+    folded = args
+    for tool in tools:
+        folded = [cut_all(folded, [tool])]
+    return folded[0] if not _removed_nothing(folded[0], before) else at_once
 
 
 def own_rgba(shape: Shape) -> tuple | None:
