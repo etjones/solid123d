@@ -268,6 +268,44 @@ def fuse_bodies(shapes: list[Shape]) -> Shape:
     return bodies[0]._bool_op([bodies[0]], bodies[1:], BRepAlgoAPI_Fuse())
 
 
+def extent(shape: Shape) -> float:
+    """The quantity a boolean must not silently leave unchanged: volume for
+    3D geometry, area for 2D."""
+    solids = shape.solids()
+    if solids:
+        return sum(abs(solid.volume) for solid in solids)
+    return sum(abs(face.area) for face in shape.faces())
+
+
+def cut_all(args: list[Shape], tools: list[Shape]) -> Shape:
+    """Cut by every tool in one OCCT pass, folding instead when that pass
+    silently does nothing.
+
+    One N-ary Cut is much cheaper than a fold -- a single pass over the
+    argument rather than one per tool -- and it is what keeps a model with
+    many subtrahends from crawling. But OCCT can hand the argument back
+    untouched: found on a model whose five tools included a cone, where
+    four cut correctly and adding the fifth returned the minuend
+    unchanged, while folding the same five removed 99.9% of it. The
+    plausibility guard cannot see this, since a cut that removes nothing
+    is legitimate whenever the tools miss the argument.
+
+    So the fold is tried only when the fast path removed *exactly* nothing,
+    and its result is adopted only if it removed something -- which means a
+    genuine miss still costs one wasted fold and returns the same answer.
+    """
+    at_once = boolean(args, tools, BRepAlgoAPI_Cut())
+    if len(tools) < 2:
+        return at_once
+    before = sum(extent(arg) for arg in args)
+    if not math.isclose(extent(at_once), before, rel_tol=1e-12, abs_tol=VOLUME_EPS):
+        return at_once
+    folded = at_once
+    for index, tool in enumerate(tools):
+        folded = boolean([folded] if index else args, [tool], BRepAlgoAPI_Cut())
+    return folded if extent(folded) < before else at_once
+
+
 def own_rgba(shape: Shape) -> tuple | None:
     """The color set on this very shape, ignoring inheritance."""
     return tuple(shape._color) if shape._color is not None else None

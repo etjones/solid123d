@@ -482,3 +482,28 @@ so the idiom no longer produces a multi-face operand at all.
 Tweezers now 7802.73 against OpenSCAD's 7802.51 (0.003%), `scad123d-diff`
 agrees, and the render is a pair of tweezers rather than a plate. 14 new
 tests; 206 pass in solid123d, 367 in scad123d.
+
+**User** (via scad123d): look at `codecad-review-3/003-16362263_0-table-eq-wire_V2`
+(1.9e7 against OpenSCAD's 88,521).
+
+**Assistant**: `scad123d-diff` localized it to one inner `difference()`:
+ours 66,668,695.19, OpenSCAD 65,168.47. That figure is *exactly* the
+minuend -- a cone capped by a disk -- so the cut removed nothing at all.
+Each of the five subtrahends removes 33-99% on its own, and folding all
+five removes 99.9%; handing all five to one OCCT Cut returns the argument
+untouched. Four tools cut correctly; adding the fifth (a second cone)
+triggers it. No smaller combination reproduces it, and the plausibility
+guard cannot see it, because a cut whose tools miss legitimately removes
+nothing -- the Cut upper bound is the argument's own volume.
+
+Fix: `cut_all()` keeps the one-pass N-ary cut (the optimisation that
+stopped many-subtrahend models from crawling) and folds tool by tool only
+when the fast path removed *exactly* nothing, adopting the fold only if it
+removed something. A genuine miss therefore costs one wasted fold and the
+same answer. Added `extent()` -- volume for 3D, area for 2D -- so the
+check also covers 2D cuts. 10 new tests, including one that asserts the
+raw N-ary path really does no-op on this geometry, so the regression test
+stops silently passing if OCCT ever fixes it.
+
+Model now 88,590.29 against 88,521.24 (0.08%), `scad123d-diff` agrees, and
+the render matches OpenSCAD's. 216 pass in solid123d, 367 in scad123d.

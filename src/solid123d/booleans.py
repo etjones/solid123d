@@ -15,7 +15,7 @@ import warnings
 from collections.abc import Callable
 
 from build123d import Shape
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Common
 
 from ._common import (
     VOLUME_EPS,
@@ -23,6 +23,7 @@ from ._common import (
     _recolored,
     boolean,
     checked,
+    cut_all,
     flatten,
     group,
     own_rgba,
@@ -53,7 +54,7 @@ def difference() -> Applier:
         # OCCT's Cut takes every subtrahend at once: A - (B u C) is
         # (A - B) - C, in one pass over A instead of one per subtrahend.
         if not _carries_color(base):
-            return boolean([base], cutters, BRepAlgoAPI_Cut())
+            return cut_all([base], cutters)
         return _cut_regions(base, cutters)
 
     return apply
@@ -66,10 +67,10 @@ def _cut_regions(base: Shape, cutters: list[Shape]) -> Shape:
     the cutters' colors are irrelevant (a cutter is a hole, not material).
     """
     regions = world_leaves(base)
-    plain = boolean(regions, cutters, BRepAlgoAPI_Cut())
+    plain = cut_all(regions, cutters)
     kept: list[Shape] = []
     for region in regions:
-        piece = boolean([region], cutters, BRepAlgoAPI_Cut())
+        piece = cut_all([region], cutters)
         if total_volume(piece) > VOLUME_EPS:
             kept.append(_recolored(piece, own_rgba(region), region.label))
     return checked(kept, plain, "difference")
