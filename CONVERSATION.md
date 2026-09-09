@@ -507,3 +507,34 @@ stops silently passing if OCCT ever fixes it.
 
 Model now 88,590.29 against 88,521.24 (0.08%), `scad123d-diff` agrees, and
 the render matches OpenSCAD's. 216 pass in solid123d, 367 in scad123d.
+
+**User** (via scad123d): `codecad-review-3/006-110428_0-flying_saucer_v2`
+still shows a large sphere the STL doesn't have.
+
+**Assistant**: A second, distinct cut defect. The model is
+`sphere(r=109.659) - box over its lower half - three pegs`, expected to
+leave a 31,197 cap; we produced 5,527,684, the whole sphere. The exact cut
+*split* the sphere correctly and then kept the piece it was told to
+remove: four solids came back -- the right cap, the entire lower part, and
+two zero-volume seam slivers -- carrying the sphere's full volume. The
+same geometry at r=10 is exact, so it is a tolerance failure, and OCCT's
+fuzzy mode at 1e-5 gets it right.
+
+Not the N-ary defect from #17, and `cut_all` did not catch it for two
+reasons: with the pegs also subtracted the exact cut removed *something*
+(the pegs, 212 of 5.5e6), so "removed nothing" was never true; and my
+`rel_tol=1e-12` was tighter than mass-property integration noise across
+different face sets, which this codebase already documents at 1e-8..2e-7,
+so even the single-tool case was not recognised as unchanged.
+
+Fix: every cut is now fuzzy (one operation, no extra cost), which handles
+the tolerance class, and the fold is kept for the N-ary class since fuzzy
+does not help there -- verified by making cuts always-fuzzy and watching
+only the two N-ary tests fail. `CUT_NOOP_RTOL = 1e-6` replaces the 1e-12.
+Judgement call worth noting: 1e-5 mm is 10 nm on a millimetre-scale model,
+but it is a fixed absolute tolerance, so a model authored in metres would
+see it differently.
+
+Saucer now 35,392.12 against OpenSCAD's 35,255.40 (0.39%); wire, tweezers
+and the ornament all unchanged. 221 pass in solid123d, 367 in scad123d,
+suite runtime unchanged (62s against a 64s baseline).
