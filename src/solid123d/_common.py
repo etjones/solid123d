@@ -142,8 +142,15 @@ def group(children: Iterable[object]) -> Shape:
     # child's own .color -- a flat Compound with no parent/child tree is
     # treated as one leaf and gets a single color splashed across every
     # solid inside it instead.
-    naive_total = sum(total_volume(s) for s in shapes)
-    if math.isclose(total_volume(fused), naive_total, rel_tol=1e-9, abs_tol=1e-9):
+    # extent(), not total_volume(): the quantity that says whether these
+    # children overlap is volume for solids and area for 2D geometry. Every
+    # 2D shape has volume 0, so measuring by volume made "they share
+    # nothing" trivially true for every colored 2D union, and the children
+    # came back stacked on each other, never merged. A butter dish's lid
+    # profile reached linear_extrude() as three overlapping faces of
+    # 24,552 where the region was 8,056.
+    naive_total = sum(extent(s) for s in shapes)
+    if math.isclose(extent(fused), naive_total, rel_tol=1e-9, abs_tol=1e-9):
         return Compound(children=list(shapes))
 
     # Real overlap: partition instead of fusing. Later children claim

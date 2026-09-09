@@ -613,3 +613,23 @@ summed area against OpenSCAD's 1,438 -- turned out to be a transform bug
 instead. The circles sat at 21 different z heights in our build, so they
 genuinely did not overlap and the union was right to leave them alone.
 See the scad123d side for what actually caused it.
+
+---
+
+## A colored 2D union never merged
+
+`group()` decides whether colored children overlap by comparing the fused
+total against the naive sum. It measured with `total_volume`, and every
+2D shape has volume 0, so "they share nothing" was trivially true for
+every colored 2D union: the children came back stacked on each other,
+never merged.
+
+Found in `Butterdose2.scad`, one of the two genuine errors among the
+fifteen worst mismatches. Its lid profile is a blue square unioned with
+red lens pieces, and it reached `linear_extrude()` as three overlapping
+faces of 24,552 where the region is 8,056. Extruded, that was 1,930,728
+against OpenSCAD's 35,487.
+
+`extent()` already answers this correctly -- volume for solids, area for
+2D -- and using it makes the whole model convert at 35,527.23 against
+35,486.57.
