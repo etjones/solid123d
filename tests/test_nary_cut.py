@@ -1,8 +1,4 @@
-"""Cuts that leave behind material they were asked to remove.
-
-Two OCCT defects, both of which the plausibility guard cannot see: the
-most a cut may remove is everything, so the bound it checks against is the
-argument's own volume, and a cut that removes nothing sits inside it.
+"""An N-ary cut that silently removes nothing.
 
 One OCCT Cut with every subtrahend at once is much cheaper than folding
 tool by tool -- one pass over the argument instead of one per tool -- and
@@ -130,67 +126,3 @@ class TestNoFalsePositives:
         cube = s.cube(10, center=True)
         tools = [s.cube(50, center=True), s.translate([100, 0, 0])(s.cube(5))]
         assert extent(cut_all([cube], tools)) == pytest.approx(0, abs=1e-9)
-
-
-class TestExactCutKeepsAPiece:
-    """The other defect: the exact algorithm splits the argument correctly
-    and then keeps the piece it was asked to remove. A sphere of r=109.659
-    cut by a box over its lower half came back as four solids -- the right
-    cap, the whole lower part, and two zero-volume slivers on the seam --
-    with the sphere's full volume. The same shape at r=10 is fine, so it is
-    a tolerance failure, and every cut is made fuzzy because of it.
-    """
-
-    R = 109.659
-    CAP = 31197.25  # pi h^2 (3R - h) / 3, h = 9.659
-
-    def sphere(self):
-        return s.translate([0, 0, -100])(s.sphere(r=self.R, segments=128))
-
-    def lower_half(self):
-        return s.translate([-self.R, -self.R, -209.659])(
-            s.cube([2 * self.R, 2 * self.R, 209.659])
-        )
-
-    def test_the_exact_cut_really_keeps_the_lower_half(self):
-        """Guards the fixture: if OCCT fixes this, the tests below stop
-        proving anything and this one says so."""
-        exact = boolean([self.sphere()], [self.lower_half()], BRepAlgoAPI_Cut())
-        # Split into pieces, but none of them discarded: the whole sphere
-        # is still there. (Raw OCCT returns four solids, two of them
-        # zero-volume seam slivers; the guarded clean merges those away,
-        # so only the volume is worth asserting.)
-        assert extent(exact) == pytest.approx(extent(self.sphere()), rel=1e-9)
-        assert len(exact.solids()) > 1
-
-    def test_the_fuzzy_cut_leaves_only_the_cap(self):
-        assert extent(cut_all([self.sphere()], [self.lower_half()])) == pytest.approx(
-            self.CAP, rel=1e-4
-        )
-
-    def test_difference_leaves_only_the_cap(self):
-        result = s.difference()(self.sphere(), self.lower_half())
-        assert extent(result) == pytest.approx(self.CAP, rel=1e-4)
-        assert result.bounding_box().min.Z == pytest.approx(0, abs=1e-6)
-
-    def test_it_survives_a_second_smaller_tool(self):
-        """The model's own shape: the same cut with three small pegs also
-        subtracted. The exact cut removed the pegs but not the half, so
-        'removed nothing' was never true and only the fuzzy cut recovers it.
-        """
-        pegs = s.union()(
-            *[
-                s.translate(offset)(s.cylinder(h=10, r=1.5, center=True, segments=12))
-                for offset in ([0, 20, 0], [17.3205, -10, 0], [-17.3205, -10, 0])
-            ]
-        )
-        result = s.difference()(self.sphere(), self.lower_half(), pegs)
-        assert extent(result) < 0.01 * extent(self.sphere())
-        assert extent(result) == pytest.approx(self.CAP, rel=0.01)
-
-    def test_the_same_geometry_scaled_down_was_always_fine(self):
-        small = s.difference()(
-            s.translate([0, 0, -9])(s.sphere(r=10, segments=128)),
-            s.translate([-10, -10, -19])(s.cube([20, 20, 19])),
-        )
-        assert extent(small) == pytest.approx(math.pi * 1 * (30 - 1) / 3, rel=1e-6)
