@@ -507,3 +507,42 @@ stops silently passing if OCCT ever fixes it.
 
 Model now 88,590.29 against 88,521.24 (0.08%), `scad123d-diff` agrees, and
 the render matches OpenSCAD's. 216 pass in solid123d, 367 in scad123d.
+
+**User**: Revert #18 and merge the mesh fix. Do you have a proposal, or
+should we accept that CGAL and OCCT differ?
+
+**Assistant**: Reverted #18, merged scad123d #30. Corrected an
+overstatement first: of the three "regressions" I reported, only reversi
+was one. The seal (9,568.86) and rpi_bracket (0.00) produce the same
+values at the published 0.8.0, so their ledger rows were simply stale --
+nothing has ever re-run an `ok` file, so the 56,000 passing rows are of
+unknown age, and one of them records `ok` for a model that converts to
+nothing.
+
+On the question: divergence is acceptable for tessellation (bounded,
+convergent, already documented) but not for wrong answers, which is what
+all four of tonight's bugs were. Proposed asserting a semantic invariant
+on our own output instead of chasing OpenSCAD's number.
+
+**User**: Let's implement that invariant check.
+
+**Assistant**: Done on `feature/cut-invariant`. A cut may not keep
+material inside the shapes it cut with. `material_left_in_tools` samples
+one interior point per result body (`interior_point`: centre first, then
+points just inside faces, since a non-convex body's centre can fall
+outside it) and classifies it against the tools; ON the boundary is not a
+violation, as a cut leaves its result flush against its tool. Only on
+violation does anything retry -- fuzzy at fractions of the model's
+bounding-box diagonal, then a fold tool by tool -- and the first candidate
+satisfying the invariant wins, else the original stands with a warning.
+
+Cost: the check is ~0.45 ms, near-constant, so 23% of a trivial cut and
+under 5% of a real one; eager candidate generation had made it 60% until
+it was made lazy. Measured 40 previously-ok models bit-identical to main
+at +1.0% total runtime -- the validation skipped before #18.
+
+Fixes both saucers, the wire, and the seal (8,008.98, which neither #18
+nor anything else recovered), while leaving reversi at 118.80 because its
+plain cut satisfies the invariant so no fuzzy is applied. rpi_bracket
+still converts to 0.00: a different defect, producing nothing rather than
+keeping too much. 227 pass in solid123d, 373 in scad123d.
