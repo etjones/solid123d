@@ -13,7 +13,7 @@ from collections.abc import Iterable, Sequence
 
 import webcolors
 from build123d import Color, Compound, Location, Shape, Solid
-from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
 from OCP.TopAbs import TopAbs_COMPOUND, TopAbs_SOLID
 from OCP.TopLoc import TopLoc_Location
@@ -102,7 +102,7 @@ def group(children: Iterable[object]) -> Shape:
     # quadratic once curved faces stop merging away (200 overlapping
     # cylinders: 19.5 s pairwise, 1.1 s in one operation), and every
     # timeout in the CodeCAD corpus runs was in that loop.
-    fused = shapes[0].fuse(*shapes[1:])
+    fused = fuse_bodies(shapes)
 
     # Everything below exists only to keep authored color() information
     # alive; a group with no colors anywhere gets the plain fuse -- and
@@ -219,22 +219,53 @@ def _partitioned_union(shapes: list[Shape], fused: Shape) -> Shape:
     return checked(bodies, fused, "union")
 
 
-def boolean(args: list[Shape], tools: list[Shape], operation) -> Shape:
-    """A boolean with every body passed as its own argument.
+def bodies_of(shape: Shape) -> list[Shape]:
+    """A shape's constituent bodies, for use as boolean operands.
 
-    OCCT does not accept a compound of touching or overlapping solids as a
-    single boolean argument: the operation reports success and hands back
-    the input unchanged. Splitting to solids is what makes the general
-    case work, and the plain result of this is the ground truth that the
-    color-preserving results are checked against.
+    OCCT mishandles a compound of touching or overlapping bodies passed as
+    one boolean operand: the operation reports success and returns
+    nonsense. For solids a cut can come back *larger* than its argument;
+    for faces a fuse of a two-face sketch with a square returned a face of
+    area 8e100. Passing the bodies separately is correct in both cases.
+
+    Solids for 3D geometry, faces for 2D. A compound holding both is not
+    produced here -- group() filters mixed 2D/3D children with a warning --
+    so solids winning is safe.
     """
-    flat_args = [solid for arg in args for solid in (arg.solids() or [arg])]
-    flat_tools = [solid for tool in tools for solid in (tool.solids() or [tool])]
+    return shape.solids() or shape.faces() or [shape]
+
+
+def _operands(shapes: Iterable[Shape]) -> list[Shape]:
+    return [body for shape in shapes for body in bodies_of(shape)]
+
+
+def boolean(args: list[Shape], tools: list[Shape], operation) -> Shape:
+    """A boolean with every body passed as its own operand.
+
+    OCCT computes ``(union of args) OP (union of tools)``, so decomposing
+    both sides is exactly equivalent to the operation on the compounds --
+    except that it actually works. See ``bodies_of``.
+    """
+    flat_args = _operands(args)
+    flat_tools = _operands(tools)
     if not flat_args:
         raise ValueError("a boolean needs at least one argument")
     if not flat_tools:
         return assemble(flat_args)
     return flat_args[0]._bool_op(flat_args, flat_tools, operation)
+
+
+def fuse_bodies(shapes: list[Shape]) -> Shape:
+    """The union of *shapes*, every body its own operand.
+
+    A plain ``shapes[0].fuse(*shapes[1:])`` passes each child whole, so a
+    child that is a multi-face sketch or multi-solid compound triggers the
+    defect in ``bodies_of``.
+    """
+    bodies = _operands(shapes)
+    if len(bodies) == 1:
+        return bodies[0]
+    return bodies[0]._bool_op([bodies[0]], bodies[1:], BRepAlgoAPI_Fuse())
 
 
 def own_rgba(shape: Shape) -> tuple | None:

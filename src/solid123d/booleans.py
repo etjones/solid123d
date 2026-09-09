@@ -13,8 +13,6 @@ and a faceted approximation would defeat the point of a BRep kernel.
 
 import warnings
 from collections.abc import Callable
-from functools import reduce
-from operator import and_
 
 from build123d import Shape
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Common, BRepAlgoAPI_Cut
@@ -55,7 +53,7 @@ def difference() -> Applier:
         # OCCT's Cut takes every subtrahend at once: A - (B u C) is
         # (A - B) - C, in one pass over A instead of one per subtrahend.
         if not _carries_color(base):
-            return base.cut(*cutters)
+            return boolean([base], cutters, BRepAlgoAPI_Cut())
         return _cut_regions(base, cutters)
 
     return apply
@@ -83,10 +81,23 @@ def intersection() -> Applier:
         if not shapes:
             raise ValueError("intersection() requires at least one shape")
         if len(shapes) == 1 or not any(_carries_color(s) for s in shapes):
-            return reduce(and_, shapes)
+            return _intersect_plain(shapes)
         return _intersect_regions(shapes)
 
     return apply
+
+
+def _intersect_plain(shapes: list[Shape]) -> Shape:
+    """Intersection of every operand, each decomposed into its own bodies.
+
+    OCCT's Common of an argument list and a tool list is the common part of
+    their unions, so folding operand by operand keeps OpenSCAD's semantics
+    while never handing a compound over whole.
+    """
+    result = shapes[0]
+    for other in shapes[1:]:
+        result = boolean([result], [other], BRepAlgoAPI_Common())
+    return result
 
 
 def _intersect_regions(shapes: list[Shape]) -> Shape:
