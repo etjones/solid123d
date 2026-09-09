@@ -1,6 +1,48 @@
 """Gated workarounds for upstream OCCT/build123d defects.
 
-OCCT_SPHERE_SEAM_BUG_IS_UNFIXED gates the one active workaround. While
+Every OCCT workaround in solid123d, and where it lives. Two are
+monkeypatches installed by importing this module, so no call site reveals
+them; this list is the only place all four are visible.
+
+In this module, as monkeypatches:
+
+1. ``Shape.clean`` -- ``clean()`` deletes real geometry when the result
+   holds a face crossed by a curved surface's parametric seam
+   (gumyr/build123d#1428). The guarded version keeps the unclean shape
+   when the clean would not conserve volume. Detailed below.
+
+2. ``Shape._bool_op`` -- a boolean returns a *valid* shape missing most of
+   its material when an operand nearly coincides with the accumulated
+   result (a loop laying its last copy on its first, off by
+   rotation-matrix noise: 17 mm^3 for what should have been 207). Such a
+   result falls outside the bounds its inputs imply, and the same
+   operation with a fuzzy tolerance gets it right; if that does not help,
+   it warns rather than pretending.
+
+In ``_common``, as ordinary functions called from the operations that need
+them, so these two *are* visible from their call sites:
+
+3. ``bodies_of`` (used by ``boolean``) -- a boolean handed a compound of
+   touching or overlapping bodies as one operand returns nonsense: a cut
+   came back *larger* than its argument, and a fuse of a two-face sketch
+   with a square returned a face of area 8e100. Passing every body as its
+   own operand is equivalent by OCCT's own definition of the operation,
+   and works.
+
+4. ``cut_all`` (used by ``booleans.difference``) -- one Cut taking every
+   subtrahend at once can return the argument untouched. Seen with five
+   tools where four cut correctly; the fold that recovers it is tried only
+   when the fast path removed exactly nothing.
+
+The split between this module and those two is deliberate. Here the
+question is "is this result valid?", a property of one operation's output.
+There it is "how should this operation be handed to OCCT?", a strategy the
+call site owns. They also measure differently: the bounds check here uses
+volume alone, which is 0 for 2D geometry, while ``cut_all`` falls back to
+area -- so folding the no-op detection into the bounds check would either
+lose 2D coverage or change the bounds semantics for every operation.
+
+OCCT_SPHERE_SEAM_BUG_IS_UNFIXED gates the clean patch below. While
 True (the current state of upstream), importing solid123d replaces
 ``build123d.Shape.clean`` with a volume-guarded version; set it to False
 -- or delete the workaround entirely -- once upstream ships a fix, and
