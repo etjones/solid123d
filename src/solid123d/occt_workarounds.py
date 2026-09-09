@@ -29,10 +29,14 @@ them, so these two *are* visible from their call sites:
    own operand is equivalent by OCCT's own definition of the operation,
    and works.
 
-4. ``cut_all`` (used by ``booleans.difference``) -- one Cut taking every
-   subtrahend at once can return the argument untouched. Seen with five
-   tools where four cut correctly; the fold that recovers it is tried only
-   when the fast path removed exactly nothing.
+4. ``cut_all`` (used by ``booleans.difference``) -- a cut can keep
+   material inside the very shapes it cut with. OCCT split a sphere
+   against a box across its middle and then kept the half the box
+   covered; separately, one Cut taking every subtrahend at once returned
+   the argument untouched where any four of the five cut correctly.
+   ``material_left_in_tools`` states the invariant both violate, and only
+   when it is violated does anything retry: a fuzzy value scaled to the
+   model, then a fold tool by tool.
 
 The split between this module and those two is deliberate. Here the
 question is "is this result valid?", a property of one operation's output.

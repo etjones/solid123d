@@ -9,13 +9,15 @@ all behave identically.
 
 import math
 import warnings
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 
 import webcolors
-from build123d import Color, Compound, Location, Shape, Solid
+from build123d import Color, Compound, Location, Shape, Solid, Vector
 from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut, BRepAlgoAPI_Fuse
 from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
-from OCP.TopAbs import TopAbs_COMPOUND, TopAbs_SOLID
+from OCP.BRepClass3d import BRepClass3d_SolidClassifier
+from OCP.gp import gp_Pnt
+from OCP.TopAbs import TopAbs_COMPOUND, TopAbs_IN, TopAbs_SOLID
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS_Shape
 
@@ -23,6 +25,14 @@ Vec3 = tuple[float, float, float]
 
 # A region body smaller than this is boolean dust, not material.
 VOLUME_EPS = 1e-9
+
+# Tolerance for classifying a point against a solid, and the fractions of
+# a model's bounding-box diagonal tried as OCCT fuzzy values when a cut
+# has to be retried. Fractions rather than distances: OCCT asks for a
+# value measured against the geometry in question, and a constant means
+# something different on a 400 mm assembly than on a 4 mm part.
+POINT_TOL = 1e-7
+FUZZ_FRACTIONS = (1e-7, 1e-5)
 
 
 def vec3(v: float | Sequence[float], default: float = 0.0) -> Vec3:
@@ -280,35 +290,144 @@ def extent(shape: Shape) -> float:
     return sum(abs(face.area) for face in shape.faces())
 
 
+def _inside(solid: TopoDS_Shape, point: Vector) -> bool:
+    """Is *point* strictly inside *solid*? ON the boundary does not count:
+    a cut leaves its result flush against the tool it cut with, and that is
+    the correct answer, not a violation."""
+    classifier = BRepClass3d_SolidClassifier(
+        solid, gp_Pnt(point.X, point.Y, point.Z), POINT_TOL
+    )
+    return classifier.State() == TopAbs_IN
+
+
+def _interior_candidates(solid: Shape) -> Iterator[Vector]:
+    """Points that might lie inside *solid*, cheapest first and computed
+    only as far as they are needed -- the centre serves for almost every
+    body, and eagerly preparing the rest cost more than the whole check."""
+    yield solid.center()
+    step = solid.bounding_box().diagonal * 1e-3
+    for face in solid.faces():
+        try:
+            middle = face.center()
+            yield middle - Vector(face.normal_at(middle)) * step
+        except Exception:  # noqa: BLE001, S112 - no usable normal here; try the next face
+            continue
+
+
+def interior_point(solid: Shape, limit: int = 8) -> Vector | None:
+    """A point strictly inside *solid*, or None if none was found.
+
+    The centre of a non-convex body can fall outside it, so a few points
+    just inside its faces are tried next. None means "could not tell",
+    never "outside": a caller must not read it as a verdict.
+    """
+    for tried, point in enumerate(_interior_candidates(solid)):
+        if tried >= limit:
+            return None
+        if _inside(solid.wrapped, point):
+            return point
+    return None
+
+
+def material_left_in_tools(result: Shape, tools: list[Shape]) -> bool:
+    """Does *result* still hold material inside one of the *tools*?
+
+    The invariant a cut must satisfy, and the reason it is worth checking:
+    it is a statement about the answer, not about how the kernel reached
+    it, so it needs no reference render and no tolerance to compare
+    against. Every way OCCT has been seen to get a cut wrong -- keeping
+    the half of a sphere a box covered, handing back the whole minuend --
+    violates it, and the plausibility guard in ``occt_workarounds`` cannot,
+    because the most a cut may remove is everything, so its upper bound is
+    the argument's own volume.
+
+    Sampling one interior point per body detects a body wholly inside a
+    tool, which is what those failures produce. It is a detector, not a
+    proof: a body with only a lobe inside a tool can pass.
+    """
+    solids = [solid.wrapped for tool in tools for solid in (tool.solids() or [tool])]
+    if not solids:
+        return False
+    for body in result.solids():
+        point = interior_point(body)
+        if point is None:
+            continue
+        if any(_inside(solid, point) for solid in solids):
+            return True
+    return False
+
+
+def _repairs(
+    args: list[Shape], tools: list[Shape]
+) -> Iterator[tuple[str, Callable[[], Shape]]]:
+    """Ways to retry a cut whose result kept material it should have lost,
+    cheapest first.
+
+    The fuzzy values are fractions of the model's own size, not fixed
+    distances. OCCT's guidance is to measure the gap being bridged and
+    pass slightly more than that; a constant cannot do that, and a
+    constant 1e-5 is what regressed a model of small meshed hulls while
+    helping a 110 mm sphere. Scaling keeps the same *meaning* at any size.
+    """
+    diagonal = max(
+        (arg.bounding_box().diagonal for arg in args),
+        default=1.0,
+    )
+    for fraction in FUZZ_FRACTIONS:
+        fuzz = diagonal * fraction
+        yield f"fuzzy {fuzz:.3g}", lambda f=fuzz: _cut(args, tools, fuzz=f)
+    if len(tools) > 1:
+        yield "one tool at a time", lambda: _folded(args, tools)
+
+
+def _cut(args: list[Shape], tools: list[Shape], fuzz: float | None = None) -> Shape:
+    operation = BRepAlgoAPI_Cut()
+    if fuzz is not None:
+        operation.SetFuzzyValue(fuzz)
+    return boolean(args, tools, operation)
+
+
+def _folded(args: list[Shape], tools: list[Shape]) -> Shape:
+    result = args
+    for tool in tools:
+        result = [_cut(result, [tool])]
+    return result[0]
+
+
 def cut_all(args: list[Shape], tools: list[Shape]) -> Shape:
-    """Cut by every tool in one OCCT pass, folding instead when that pass
-    silently does nothing.
+    """Cut by every tool, checking that the result kept nothing it should
+    have removed, and retrying if it did.
 
     One of four OCCT workarounds; see ``occt_workarounds`` for the map.
 
-    One N-ary Cut is much cheaper than a fold -- a single pass over the
-    argument rather than one per tool -- and it is what keeps a model with
-    many subtrahends from crawling. But OCCT can hand the argument back
-    untouched: found on a model whose five tools included a cone, where
-    four cut correctly and adding the fifth returned the minuend
-    unchanged, while folding the same five removed 99.9% of it. The
-    plausibility guard cannot see this, since a cut that removes nothing
-    is legitimate whenever the tools miss the argument.
+    The single N-ary Cut comes first because it is much cheaper than a fold
+    -- one pass over the argument instead of one per tool -- and that is
+    what keeps a model with many subtrahends from crawling. Then
+    ``material_left_in_tools`` asks whether the answer is actually a cut.
+    Only if it is not does anything else run: a fuzzy retry at a couple of
+    fractions of the model's size, then a fold tool by tool. The first
+    candidate that satisfies the invariant wins.
 
-    So the fold is tried only when the fast path removed *exactly* nothing,
-    and its result is adopted only if it removed something -- which means a
-    genuine miss still costs one wasted fold and returns the same answer.
+    If none does, the original stands and a warning says so, so a cut we
+    cannot verify behaves exactly as it did before this check existed.
     """
-    at_once = boolean(args, tools, BRepAlgoAPI_Cut())
-    if len(tools) < 2:
+    at_once = _cut(args, tools)
+    if not material_left_in_tools(at_once, tools):
         return at_once
-    before = sum(extent(arg) for arg in args)
-    if not math.isclose(extent(at_once), before, rel_tol=1e-12, abs_tol=VOLUME_EPS):
-        return at_once
-    folded = at_once
-    for index, tool in enumerate(tools):
-        folded = boolean([folded] if index else args, [tool], BRepAlgoAPI_Cut())
-    return folded if extent(folded) < before else at_once
+
+    for description, attempt in _repairs(args, tools):
+        candidate = attempt()
+        if not material_left_in_tools(candidate, tools):
+            return candidate
+        del description
+
+    warnings.warn(
+        "solid123d: this cut kept material inside the shapes it was cutting "
+        "with, and neither a fuzzy retry nor cutting one tool at a time "
+        "fixed it; the result is probably wrong",
+        stacklevel=4,
+    )
+    return at_once
 
 
 def own_rgba(shape: Shape) -> tuple | None:
