@@ -592,3 +592,24 @@ pruning saw 0 -> 1,583.37 (0.05%), coin calibration 0 -> 1,682.00
 Snowflake stays at 0, and no tolerance from exact to 1e-3 of its
 diagonal changes that; the helix is the same. Those two want OpenSCAD's
 mesh for the subtree, not a tolerance.
+
+---
+
+## The union invariant, in two dimensions
+
+`pieces_of` now answers with solids, or faces when there are none -- the
+same distinction `extent` already draws -- so both halves of the union
+invariant apply to 2D geometry. A sheet has no solids, so before this the
+checks silently passed everything 2D.
+
+`bodies_overlap` needed a containment test for faces (`Face.is_inside`)
+and interior points that work on one: the centre, then points drawn from
+each edge's middle toward it, which lands inside a crescent whose centre
+falls in the bite.
+
+Honest about the evidence: this is defensive. The model that looked like a
+2D union failure -- a stack of 21 concentric circles reporting 27,479 of
+summed area against OpenSCAD's 1,438 -- turned out to be a transform bug
+instead. The circles sat at 21 different z heights in our build, so they
+genuinely did not overlap and the union was right to leave them alone.
+See the scad123d side for what actually caused it.

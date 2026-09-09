@@ -275,22 +275,33 @@ def _fuse(bodies: list[Shape], fuzz: float | None = None) -> Shape:
     return bodies[0]._bool_op([bodies[0]], bodies[1:], operation)
 
 
-def gained_bodies(bodies: list[Shape], result: Shape) -> bool:
-    """Did the union come back in more pieces than it was given?
+def pieces_of(shape: Shape) -> list[Shape]:
+    """The separate bodies a shape is made of.
 
-    A union joins material; it can never break it apart. The union of N
-    connected bodies has at most N connected components, so a result with
-    more solids than there were operands is not a different-but-valid
-    answer -- it is OCCT having failed. Counting solids needs no mass
-    properties and no point classification, which is why every union can
-    afford this check.
+    Solids, or faces when there are none -- the same distinction
+    ``extent`` draws, because a 2D union is as capable of coming back
+    unmerged as a 3D one, and a sheet has no solids for the checks below
+    to look at.
     """
-    solids = result.solids()
-    return bool(solids) and len(solids) > len(bodies)
+    return shape.solids() or shape.faces()
 
 
-def _interior_points(solid: Shape, limit: int = 3) -> list[Vector]:
-    """A few points strictly inside *solid*, for asking whether some other
+def _face_candidates(face: Shape) -> Iterator[Vector]:
+    """Points that might lie inside a 2D *face*, cheapest first: its
+    centre, then points drawn from each edge's middle toward that centre,
+    which lands inside even a crescent whose centre does not."""
+    middle = face.center()
+    yield middle
+    for edge in face.edges():
+        try:
+            at = edge.center()
+        except Exception:  # noqa: BLE001, S112 -- no usable centre; next edge
+            continue
+        yield at + (middle - at) * 1e-3
+
+
+def _interior_points(piece: Shape, limit: int = 3) -> list[Vector]:
+    """A few points strictly inside *piece*, for asking whether some other
     body also contains one of them.
 
     More than one, because a single sample is easy to place badly: the
@@ -298,13 +309,43 @@ def _interior_points(solid: Shape, limit: int = 3) -> list[Vector]:
     land exactly on the other's face, where the answer is neither in nor
     out.
     """
+    candidates = (
+        _interior_candidates(piece) if piece.solids() else _face_candidates(piece)
+    )
+    holds = _holds_point(piece)
     found = []
-    for tried, point in enumerate(_interior_candidates(solid)):
+    for tried, point in enumerate(candidates):
         if tried >= 8 or len(found) >= limit:
             break
-        if _inside(solid.wrapped, point):
+        if holds(point):
             found.append(point)
     return found
+
+
+def _holds_point(piece: Shape) -> Callable[[Vector], bool]:
+    if piece.solids():
+        return lambda point: _inside(piece.wrapped, point)
+    return lambda point: piece.is_inside(point, POINT_TOL)
+
+
+def gained_bodies(bodies: list[Shape], result: Shape) -> bool:
+    """Did the union come back in more pieces than it was given?
+
+    A union joins material; it can never break it apart. The union of N
+    connected bodies has at most N connected components, so a result with
+    more pieces than there were operands is not a
+    different-but-valid answer -- it is OCCT having failed. Counting needs
+    no mass properties and no point classification, which is why every
+    union can afford this check.
+
+    It is the whole of the check for 2D geometry in practice: a stack of
+    coincident circles came back as 21 faces holding 27,479 of summed
+    area, when the answer was the one face of 1,438 that was sitting
+    among them.
+    """
+    pieces = pieces_of(result)
+    given = sum(len(pieces_of(body)) for body in bodies)
+    return bool(pieces) and len(pieces) > given
 
 
 def bodies_overlap(result: Shape) -> bool:
@@ -316,24 +357,25 @@ def bodies_overlap(result: Shape) -> bool:
     back as 3 solids -- so only overlap itself gives it away.
 
     A union is a set, so this must never be true of a correct result.
-    Bodies that merely *touch* are fine, and ``_inside`` requires a point
-    strictly within, so a shared face is not an overlap. Sampling, and
-    only for pairs whose bounding boxes meet, keeps the common cases (one
-    body, or several far apart) nearly free; like the cut's invariant this
-    is a detector, not a proof.
+    Bodies that merely *touch* are fine: both tests here demand a point
+    strictly within, so a shared face or edge is not an overlap. Sampling,
+    and only for pairs whose bounding boxes meet, keeps the common cases
+    (one body, or several far apart) nearly free; like the cut's invariant
+    this is a detector, not a proof.
     """
-    solids = result.solids()
-    if len(solids) < 2:
+    pieces = pieces_of(result)
+    if len(pieces) < 2:
         return False
-    boxes = [solid.bounding_box() for solid in solids]
+    boxes = [piece.bounding_box() for piece in pieces]
+    holds = [_holds_point(piece) for piece in pieces]
     points: dict[int, list[Vector]] = {}
-    for i, solid in enumerate(solids):
-        for j in range(len(solids)):
+    for i, piece in enumerate(pieces):
+        for j in range(len(pieces)):
             if i == j or not boxes[i].overlaps(boxes[j]):
                 continue
             if i not in points:
-                points[i] = _interior_points(solid)
-            if any(_inside(solids[j].wrapped, p) for p in points[i]):
+                points[i] = _interior_points(piece)
+            if any(holds[j](point) for point in points[i]):
                 return True
     return False
 

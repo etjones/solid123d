@@ -10,9 +10,14 @@ enough to hold either failure.
 import warnings
 
 import pytest
-from build123d import Box, Compound, Pos, Solid
+from build123d import Box, Compound, Pos, Rectangle, Solid
 
-from solid123d._common import bodies_overlap, fuse_bodies, gained_bodies
+from solid123d._common import (
+    bodies_overlap,
+    fuse_bodies,
+    gained_bodies,
+    pieces_of,
+)
 
 
 def test_a_union_of_overlapping_boxes_is_one_body():
@@ -142,3 +147,63 @@ def test_union_of_a_solid_with_an_exact_duplicate_of_itself():
     fused = fuse_bodies([bar, Solid.make_box(2, 20, 2)])
     assert fused.volume == pytest.approx(80)
     assert not bodies_overlap(fused)
+
+
+class TestTwoDimensional:
+    """A 2D union can come back unmerged just as a 3D one can, and a sheet
+    has no solids for the checks to look at -- so both work on faces when
+    there are none, the same distinction ``extent`` draws.
+
+    Defensive rather than corpus-driven: no model in the CodeCAD corpus
+    currently exercises it. The stack of circles that looked like a 2D
+    union failure turned out to be a transform bug instead.
+    """
+
+    @staticmethod
+    def squares():
+        return [Rectangle(10, 10), Pos(5, 0, 0) * Rectangle(10, 10)]
+
+    def test_overlapping_coplanar_faces_are_detected(self):
+        from build123d import Compound
+
+        unmerged = Compound(self.squares())
+        assert bodies_overlap(unmerged)
+
+    def test_a_correct_2d_union_is_one_face_and_passes(self):
+        fused = fuse_bodies(self.squares())
+        assert len(fused.faces()) == 1
+        assert fused.area == pytest.approx(150)
+        assert not bodies_overlap(fused)
+
+    def test_faces_side_by_side_are_not_overlapping(self):
+        from build123d import Compound
+
+        apart = Compound([Rectangle(10, 10), Pos(20, 0, 0) * Rectangle(10, 10)])
+        assert not bodies_overlap(apart)
+
+    def test_faces_sharing_only_an_edge_are_not_overlapping(self):
+        from build123d import Compound
+
+        touching = Compound([Rectangle(10, 10), Pos(10, 0, 0) * Rectangle(10, 10)])
+        assert not bodies_overlap(touching)
+
+    def test_more_faces_out_than_in_is_detected(self):
+        from build123d import Compound
+
+        given = self.squares()
+        shattered = Compound([Pos(30 * i, 0, 0) * Rectangle(1, 1) for i in range(3)])
+        assert gained_bodies(given, shattered)
+
+    def test_a_crescent_is_sampled_from_inside(self):
+        """A face whose centre falls outside it -- the centre of a crescent
+        is in the bite. Sampling only the centre would miss the overlap."""
+        from build123d import Circle, Compound
+
+        crescent = Circle(10) - Pos(6, 0, 0) * Circle(8)
+        assert crescent.faces()
+        assert bodies_overlap(Compound([crescent, Circle(10)]))
+
+    def test_3d_results_still_use_solids(self):
+        """A solid has faces too; they must not be mistaken for pieces."""
+        box = Box(10, 10, 10)
+        assert len(pieces_of(box)) == 1
