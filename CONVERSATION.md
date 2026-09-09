@@ -453,3 +453,32 @@ pinned in test_regions.py (six rows plus volume conservation). Also
 consolidated one `boolean()` helper in `_common` that passes every body as
 its own OCCT argument, and fixed a local variable in `group()` that
 shadowed the module-level `total_volume()`. 192 tests pass.
+
+**User** (via scad123d): the tweezers STEP shows a flat rectangle
+(CodeCAD 11838043_0, 6e10 against OpenSCAD's 7802).
+
+**Assistant**: 6e10 is exactly 100000 x 100000 x 6 -- the whole helper
+square of Oskar Linde's 2D `fillet()`, whose `inverse()` is
+`square(1e5) - children()`. Measured the idiom step by step: the first
+inversion came back at 1e10 + 38.5, i.e. *larger* than the square it was
+cutting from. Cause: a boolean whose operand is a compound of bodies
+rather than the bodies themselves. Demonstrated on a two-face sketch and a
+1e5 square -- cut gave 1e10 + 38.5 (correct: 1e10 - 2632), fuse gave a
+face of area 8e100, intersection double-counted the overlap; passing the
+same faces as separate operands gave all three correctly. The same trap
+found earlier for solids, except `boolean()` only decomposed `.solids()`,
+so 2D slipped through and nothing caught it (the volume guard measures
+volume, and 2D geometry has none).
+
+Fix: `bodies_of()` decomposes a shape to solids, else faces, else itself;
+`boolean()` and a new `fuse_bodies()` use it, `group()` fuses through it,
+and difference/intersection route their uncoloured paths through it too
+(`_intersect_plain` folds operand by operand, which keeps OpenSCAD's
+semantics since OCCT's Common is `(union of args) OP (union of tools)`).
+Side effect worth noting: the tweezers profile -- a circle joined by two
+mirrored legs -- now unions to one merged face where it used to stay two,
+so the idiom no longer produces a multi-face operand at all.
+
+Tweezers now 7802.73 against OpenSCAD's 7802.51 (0.003%), `scad123d-diff`
+agrees, and the render is a pair of tweezers rather than a plate. 14 new
+tests; 206 pass in solid123d, 367 in scad123d.
