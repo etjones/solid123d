@@ -546,3 +546,49 @@ nor anything else recovered), while leaving reversi at 118.80 because its
 plain cut satisfies the invariant so no fuzzy is applied. rpi_bracket
 still converts to 0.00: a different defect, producing nothing rather than
 keeping too much. 227 pass in solid123d, 373 in scad123d.
+
+---
+
+## The union invariant
+
+A union joins material. It can never return more separate pieces than it
+was given, and its pieces can never overlap. `fuse_bodies` now asserts
+both and retries on violation, the same shape as `cut_all`.
+
+Found by looking at the eight corpus models that convert to exactly zero
+volume while OpenSCAD renders a real solid. Six of the eight were one
+operation failing: OCCT's n-ary fuse. Measured at the subtree the
+bisector blamed:
+
+| operands | OCCT returned | correct |
+|---|---|---|
+| 13 sheared bars | 3 solids, 637.74 | 616.37 |
+| 6 bodies | 14 solids, 20,393 | 28,072 |
+| 7 bodies | 21 solids, -0.00 | 51,313 |
+| 2 mesh polyhedra | 336 solids, -0.00 | 21.67 |
+| 19 bodies | 2 solids, 0.00 | 3,905 |
+| 2 bodies | 1 solid, 0.00 | 54,963 |
+
+The existing bounds check in `occt_workarounds` sees none of the first
+four, because the interval it tests -- largest input to sum of inputs --
+is wide enough to hold every one of those answers. Counting bodies costs
+nothing and catches three of them; an overlap test catches the bars,
+where the count stayed legal.
+
+Two things changed alongside. `bodies_overlap` samples several interior
+points per body rather than one, because the centre of a body and the
+centre of the body it half-covers can both land exactly on the other's
+face, where a point is neither in nor out. And the bounds check's retry
+now climbs a ladder of tolerances scaled to the operands' own size,
+where it used to try a single fixed 1e-5 mm: the spike array needed
+1e-4 of its diagonal, 0.013 mm, and returned exactly zero at everything
+smaller. Some rungs make OCCT throw, so a rung that throws is skipped
+rather than ending the ladder.
+
+Results with this and the scad123d zero-scale rule, on the eight:
+spikes 0 -> 53,979.84 (0.08% off), pool adapter 0 -> 51,107.86 (0.40%),
+pruning saw 0 -> 1,583.37 (0.05%), coin calibration 0 -> 1,682.00
+(exact), seed of life 0 -> 31,652.91 (1.54%, still a mismatch).
+Snowflake stays at 0, and no tolerance from exact to 1e-3 of its
+diagonal changes that; the helix is the same. Those two want OpenSCAD's
+mesh for the subtree, not a tolerance.

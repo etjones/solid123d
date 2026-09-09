@@ -107,7 +107,7 @@ class TestImplausibleBooleanRetry:
             # only the guard's larger retry value counts as the retry.
             if (
                 isinstance(operation, BRepAlgoAPI_Fuse)
-                and operation.FuzzyValue() != occt_workarounds.BOOLEAN_RETRY_FUZZ
+                and operation.FuzzyValue() not in _retry_fuzz(a, b)
             ):
                 return Box(1, 1, 1)  # "valid", but 1 mm^3 of a 1500 mm^3 union
             return real(self, args, tools, operation)
@@ -115,7 +115,8 @@ class TestImplausibleBooleanRetry:
         monkeypatch.setattr(occt_workarounds, "_original_bool_op", flaky)
         fused = a + b
         assert fused.volume == pytest.approx(1500)
-        assert len(calls) == 2 and calls[-1] == occt_workarounds.BOOLEAN_RETRY_FUZZ
+        # the exact pass, then the first rung of the ladder
+        assert len(calls) == 2 and calls[-1] == _retry_fuzz(a, b)[0]
 
     def test_plausible_results_are_not_retried(self, monkeypatch) -> None:
         real = occt_workarounds._original_bool_op
@@ -126,9 +127,11 @@ class TestImplausibleBooleanRetry:
             return real(self, args, tools, operation)
 
         monkeypatch.setattr(occt_workarounds, "_original_bool_op", counting)
-        assert (Box(10, 10, 10) - Box(4, 4, 4)).volume == pytest.approx(1000 - 64)
-        assert (Box(10, 10, 10) & Box(4, 4, 4)).volume == pytest.approx(64)
-        assert len(calls) == 2 and occt_workarounds.BOOLEAN_RETRY_FUZZ not in calls
+        a, b = Box(10, 10, 10), Box(4, 4, 4)
+        assert (a - b).volume == pytest.approx(1000 - 64)
+        assert (a & b).volume == pytest.approx(64)
+        assert len(calls) == 2
+        assert not set(calls) & set(_retry_fuzz(a, b))
 
     def test_unfixable_result_warns_rather_than_hiding(self, monkeypatch) -> None:
         def always_sliver(self, args, tools, operation):
@@ -138,6 +141,12 @@ class TestImplausibleBooleanRetry:
         with pytest.warns(UserWarning, match="implausible volume"):
             fused = Box(10, 10, 10) + Pos(5, 0, 0) * Box(10, 10, 10)
         assert fused.volume == pytest.approx(1)  # the sliver, kept but warned about
+
+
+def _retry_fuzz(*shapes) -> list[float]:
+    """The fuzzy values the guard's ladder would try for these operands."""
+    diagonal = max(s.bounding_box().diagonal for s in shapes)
+    return [diagonal * f for f in occt_workarounds.BOOLEAN_RETRY_FRACTIONS]
 
 
 class TestNestedCompoundOperands:
@@ -166,7 +175,7 @@ class TestNestedCompoundOperands:
         with warnings.catch_warnings():
             warnings.simplefilter("error")  # any "implausible" warning fails
             fused = nested + Pos(5, 0, 0) * Box(10, 10, 10)
-        assert occt_workarounds.BOOLEAN_RETRY_FUZZ not in calls  # no retry
+        assert not set(calls) & set(_retry_fuzz(nested))  # no retry
         assert occt_workarounds._leaf_volume(fused) == pytest.approx(2500)
 
     def test_inverted_result_is_implausible(self) -> None:

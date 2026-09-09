@@ -268,17 +268,123 @@ def boolean(args: list[Shape], tools: list[Shape], operation) -> Shape:
     return flat_args[0]._bool_op(flat_args, flat_tools, operation)
 
 
+def _fuse(bodies: list[Shape], fuzz: float | None = None) -> Shape:
+    operation = BRepAlgoAPI_Fuse()
+    if fuzz is not None:
+        operation.SetFuzzyValue(fuzz)
+    return bodies[0]._bool_op([bodies[0]], bodies[1:], operation)
+
+
+def gained_bodies(bodies: list[Shape], result: Shape) -> bool:
+    """Did the union come back in more pieces than it was given?
+
+    A union joins material; it can never break it apart. The union of N
+    connected bodies has at most N connected components, so a result with
+    more solids than there were operands is not a different-but-valid
+    answer -- it is OCCT having failed. Counting solids needs no mass
+    properties and no point classification, which is why every union can
+    afford this check.
+    """
+    solids = result.solids()
+    return bool(solids) and len(solids) > len(bodies)
+
+
+def _interior_points(solid: Shape, limit: int = 3) -> list[Vector]:
+    """A few points strictly inside *solid*, for asking whether some other
+    body also contains one of them.
+
+    More than one, because a single sample is easy to place badly: the
+    centre of a body and the centre of the body it half-covers can both
+    land exactly on the other's face, where the answer is neither in nor
+    out.
+    """
+    found = []
+    for tried, point in enumerate(_interior_candidates(solid)):
+        if tried >= 8 or len(found) >= limit:
+            break
+        if _inside(solid.wrapped, point):
+            found.append(point)
+    return found
+
+
+def bodies_overlap(result: Shape) -> bool:
+    """Do two of *result*'s own bodies share material?
+
+    The other way a union fails: OCCT hands back operands it never merged,
+    still lying on top of each other, so the material they share is
+    counted once per body. The piece count does not rise -- 13 bars came
+    back as 3 solids -- so only overlap itself gives it away.
+
+    A union is a set, so this must never be true of a correct result.
+    Bodies that merely *touch* are fine, and ``_inside`` requires a point
+    strictly within, so a shared face is not an overlap. Sampling, and
+    only for pairs whose bounding boxes meet, keeps the common cases (one
+    body, or several far apart) nearly free; like the cut's invariant this
+    is a detector, not a proof.
+    """
+    solids = result.solids()
+    if len(solids) < 2:
+        return False
+    boxes = [solid.bounding_box() for solid in solids]
+    points: dict[int, list[Vector]] = {}
+    for i, solid in enumerate(solids):
+        for j in range(len(solids)):
+            if i == j or not boxes[i].overlaps(boxes[j]):
+                continue
+            if i not in points:
+                points[i] = _interior_points(solid)
+            if any(_inside(solids[j].wrapped, p) for p in points[i]):
+                return True
+    return False
+
+
+def _fuse_failed(bodies: list[Shape], result: Shape) -> bool:
+    return gained_bodies(bodies, result) or bodies_overlap(result)
+
+
 def fuse_bodies(shapes: list[Shape]) -> Shape:
-    """The union of *shapes*, every body its own operand.
+    """The union of *shapes*, every body its own operand, checked against
+    the two things a union cannot do.
 
     A plain ``shapes[0].fuse(*shapes[1:])`` passes each child whole, so a
     child that is a multi-face sketch or multi-solid compound triggers the
     defect in ``bodies_of``.
+
+    The checks are statements about the answer, not about how OCCT reached
+    it, so they need no reference render: a union may not come back in
+    more pieces than it was given, and its pieces may not overlap. The
+    volume guard in ``occt_workarounds`` cannot see either failure,
+    because the interval it tests -- from the largest input to the sum of
+    the inputs -- is wide enough to hold both. A violation is retried with
+    a fuzzy tolerance, as OCCT's own guidance suggests, sized as a
+    fraction of the model rather than as a fixed distance.
     """
     bodies = _operands(shapes)
     if len(bodies) == 1:
         return bodies[0]
-    return bodies[0]._bool_op([bodies[0]], bodies[1:], BRepAlgoAPI_Fuse())
+    at_once = _fuse(bodies)
+    if not _fuse_failed(bodies, at_once):
+        return at_once
+    diagonal = max(
+        (body.bounding_box().diagonal for body in bodies),
+        default=1.0,
+    )
+    for fraction in FUZZ_FRACTIONS:
+        try:
+            candidate = _fuse(bodies, fuzz=diagonal * fraction)
+        except Exception:  # noqa: BLE001, S112 -- OCCT throws on some fuzzy
+            # values (a null shape, an empty sequence); that rung simply
+            # does not apply, and the next one may still work
+            continue
+        if candidate.wrapped is not None and not _fuse_failed(bodies, candidate):
+            return candidate
+    warnings.warn(
+        "solid123d: this union came back in more pieces than it was given, "
+        "or in pieces that overlap; neither is something a union can do, so "
+        "the result is probably wrong",
+        stacklevel=4,
+    )
+    return at_once
 
 
 def extent(shape: Shape) -> float:

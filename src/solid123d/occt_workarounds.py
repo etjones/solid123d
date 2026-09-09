@@ -2,7 +2,7 @@
 
 Every OCCT workaround in solid123d, and where it lives. Two are
 monkeypatches installed by importing this module, so no call site reveals
-them; this list is the only place all four are visible.
+them; this list is the only place all five are visible.
 
 In this module, as monkeypatches:
 
@@ -16,8 +16,9 @@ In this module, as monkeypatches:
    result (a loop laying its last copy on its first, off by
    rotation-matrix noise: 17 mm^3 for what should have been 207). Such a
    result falls outside the bounds its inputs imply, and the same
-   operation with a fuzzy tolerance gets it right; if that does not help,
-   it warns rather than pretending.
+   operation with a fuzzy tolerance gets it right. The retry climbs a
+   short ladder of tolerances, each a fraction of the operands' own size;
+   if no rung helps, it warns rather than pretending.
 
 In ``_common``, as ordinary functions called from the operations that need
 them, so these two *are* visible from their call sites:
@@ -29,7 +30,18 @@ them, so these two *are* visible from their call sites:
    own operand is equivalent by OCCT's own definition of the operation,
    and works.
 
-4. ``cut_all`` (used by ``booleans.difference``) -- a cut can keep
+4. ``fuse_bodies`` (used by ``group``, so by every union) -- a fuse can
+   return more separate pieces than it was given, or pieces that overlap
+   each other. A union joins material, so it can do neither: 6 bodies came
+   back as 14 solids holding 20,393 of the 28,072 they should, 7 came back
+   as 21 summing to negative zero, and 13 bars came back as 3 solids
+   holding 637.74 where 616.37 was right. ``gained_bodies`` and
+   ``bodies_overlap`` state the two invariants, and a violation retries on
+   the same fraction-of-the-model ladder. The bounds check above cannot
+   see any of it, because the interval from the largest input to the sum
+   of the inputs is wide enough to hold all three answers.
+
+5. ``cut_all`` (used by ``booleans.difference``) -- a cut can keep
    material inside the very shapes it cut with. OCCT split a sphere
    against a box across its middle and then kept the half the box
    covered; separately, one Cut taking every subtrahend at once returned
@@ -38,7 +50,7 @@ them, so these two *are* visible from their call sites:
    when it is violated does anything retry: a fuzzy value scaled to the
    model, then a fold tool by tool.
 
-The split between this module and those two is deliberate. Here the
+The split between this module and those three is deliberate. Here the
 question is "is this result valid?", a property of one operation's output.
 There it is "how should this operation be handed to OCCT?", a strategy the
 call site owns. They also measure differently: the bounds check here uses
@@ -116,7 +128,15 @@ CLEAN_VOLUME_RTOL = 1e-5
 # units, used for the retry. 1e-5 mm merges the near-coincident faces that
 # defeat the exact algorithm without moving any real geometry.
 BOOLEAN_VOLUME_SLACK = 1e-4
-BOOLEAN_RETRY_FUZZ = 1e-5
+
+# Fractions of the operands' own size tried as OCCT fuzzy values when a
+# boolean's volume comes back implausible. Fractions, not fixed
+# distances: OCCT asks for a value measured against the geometry in
+# question, and the 1e-5 mm this used to pass is far too small for a
+# 130 mm part -- a spike array needed 1e-4 of its diagonal, 0.013 mm, and
+# returned exactly zero at everything below that. Several rungs, because
+# one is a guess and the ladder is cheap next to a wrong answer.
+BOOLEAN_RETRY_FRACTIONS = (1e-7, 1e-6, 1e-5, 1e-4)
 
 _original_clean = Shape.clean
 _original_bool_op = Shape._bool_op
@@ -217,25 +237,48 @@ def _guarded_bool_op(self: Shape, args, tools, operation) -> Shape:
         return result
     volume = _volume_or_none(result)
     if bounds is not None and volume is not None and not _plausible(volume, bounds):
-        retry = type(operation)()
-        retry.SetFuzzyValue(BOOLEAN_RETRY_FUZZ)
-        with SkipClean():
-            candidate = _original_bool_op(self, args, tools, retry)
-        candidate_volume = (
-            _volume_or_none(candidate)
-            if candidate is not None and candidate.wrapped is not None
-            else None
-        )
-        if candidate_volume is not None and _plausible(candidate_volume, bounds):
+        candidate = _fuzzy_retry(self, args, tools, operation, bounds)
+        if candidate is not None:
             result = candidate
         else:
             warnings.warn(
                 "solid123d: OCCT boolean returned an implausible volume "
                 f"({volume:.6g}, inputs imply {bounds[0]:.6g}..{bounds[1]:.6g}) "
-                "and a fuzzy retry did not help; the result is probably wrong",
+                "and no fuzzy retry helped; the result is probably wrong",
                 stacklevel=4,
             )
     return _volume_guarded_clean(result)
+
+
+def _model_diagonal(args, tools) -> float:
+    sizes = []
+    for shape in list(args) + list(tools):
+        try:
+            sizes.append(shape.bounding_box().diagonal)
+        except Exception:  # noqa: BLE001, S112 -- an empty or broken shape
+            continue
+    return max(sizes, default=1.0)
+
+
+def _fuzzy_retry(self, args, tools, operation, bounds):
+    """Rerun the boolean with growing fuzzy tolerances, returning the first
+    result whose volume its inputs allow, or None if none does."""
+    diagonal = _model_diagonal(args, tools)
+    for fraction in BOOLEAN_RETRY_FRACTIONS:
+        retry = type(operation)()
+        retry.SetFuzzyValue(diagonal * fraction)
+        try:
+            with SkipClean():
+                candidate = _original_bool_op(self, args, tools, retry)
+        except Exception:  # noqa: BLE001, S112 -- OCCT throws on some fuzzy
+            # values; that rung does not apply, the next one may
+            continue
+        if candidate is None or candidate.wrapped is None:
+            continue
+        candidate_volume = _volume_or_none(candidate)
+        if candidate_volume is not None and _plausible(candidate_volume, bounds):
+            return candidate
+    return None
 
 
 def install() -> None:
