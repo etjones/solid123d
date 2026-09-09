@@ -222,6 +222,9 @@ def _partitioned_union(shapes: list[Shape], fused: Shape) -> Shape:
 def bodies_of(shape: Shape) -> list[Shape]:
     """A shape's constituent bodies, for use as boolean operands.
 
+    One of four OCCT workarounds; ``occt_workarounds`` carries the map of
+    all of them, including the two monkeypatches no call site reveals.
+
     OCCT mishandles a compound of touching or overlapping bodies passed as
     one boolean operand: the operation reports success and returns
     nonsense. For solids a cut can come back *larger* than its argument;
@@ -280,6 +283,8 @@ def extent(shape: Shape) -> float:
 def cut_all(args: list[Shape], tools: list[Shape]) -> Shape:
     """Cut by every tool in one OCCT pass, folding instead when that pass
     silently does nothing.
+
+    One of four OCCT workarounds; see ``occt_workarounds`` for the map.
 
     One N-ary Cut is much cheaper than a fold -- a single pass over the
     argument rather than one per tool -- and it is what keeps a model with
