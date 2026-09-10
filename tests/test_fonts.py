@@ -147,7 +147,7 @@ class TestFallbackFont:
         found = fallback_font_path()
         if found is None:
             pytest.skip("no Liberation Sans installed and no OpenSCAD bundle")
-        assert "liberation" in found.name.lower()
+        assert "liberation" in str(found).lower()
         assert FALLBACK_FAMILY == "Liberation Sans"
 
     @pytest.mark.skipif(
