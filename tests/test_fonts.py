@@ -1,4 +1,5 @@
 import sys
+from typing import ClassVar
 
 import pytest
 
@@ -177,3 +178,62 @@ class TestFallbackFont:
         real = text("H", size=20, font="Helvetica")
         missing = text("H", size=20, font="No Such Font 123")
         assert real.area != pytest.approx(missing.area, rel=0.01)
+
+
+class TestTextPlacement:
+    """Where OpenSCAD puts a string, measured against it directly.
+
+    build123d has two alignment ideas and only one is OpenSCAD's: `align`
+    moves the finished bounding box, `text_align` positions text within
+    its own layout, which is where the pen and baseline live. Aligning the
+    box put the ink at the origin, so "H" began at 0 where OpenSCAD begins
+    at its left side bearing, and "Wg" sat wholly above the axis where
+    OpenSCAD lets the g descend.
+
+    Every figure below is OpenSCAD's own render of
+    `text("Wg", size=20, font="Liberation Sans")`, the vendored face.
+    """
+
+    # (halign, valign): x_min, x_max, y_min, y_max
+    OPENSCAD: ClassVar[dict] = {
+        ("left", "baseline"): (0.122, 39.875, -5.764, 19.110),
+        ("left", "top"): (0.122, 39.875, -24.874, -0.001),
+        ("left", "center"): (0.122, 39.875, -12.433, 12.441),
+        ("left", "bottom"): (0.122, 39.875, 0.009, 24.882),
+        ("center", "baseline"): (-20.711, 19.042, -5.764, 19.110),
+        ("center", "top"): (-20.711, 19.042, -24.874, -0.001),
+        ("center", "center"): (-20.711, 19.042, -12.433, 12.441),
+        ("center", "bottom"): (-20.711, 19.042, 0.009, 24.882),
+        ("right", "baseline"): (-41.545, -1.791, -5.764, 19.110),
+        ("right", "top"): (-41.545, -1.791, -24.874, -0.001),
+        ("right", "center"): (-41.545, -1.791, -12.433, 12.441),
+        ("right", "bottom"): (-41.545, -1.791, 0.009, 24.882),
+    }
+
+    @pytest.mark.parametrize(("halign", "valign"), sorted(OPENSCAD))
+    def test_every_alignment_lands_where_openscad_puts_it(self, halign, valign):
+        shape = text("Wg", size=20, font="Liberation Sans",
+                     halign=halign, valign=valign)
+        box = shape.bounding_box()
+        expected = self.OPENSCAD[(halign, valign)]
+        got = (box.min.X, box.max.X, box.min.Y, box.max.Y)
+        assert got == pytest.approx(expected, abs=0.02)
+
+    def test_the_baseline_is_not_the_ink_bottom(self):
+        """The point of the fix: a descender hangs below y=0."""
+        shape = text("Wg", size=20, font="Liberation Sans", valign="baseline")
+        assert shape.bounding_box().min.Y < -5
+
+    def test_left_leaves_the_side_bearing(self):
+        """halign measures the layout box, from the pen to the advance, so
+        "H" starts a bearing's width in rather than at zero."""
+        shape = text("H", size=20, font="Liberation Sans", halign="left")
+        assert shape.bounding_box().min.X == pytest.approx(2.279, abs=0.02)
+
+    def test_horizontal_and_vertical_are_independent(self):
+        """Changing valign must not move the string sideways."""
+        widths = {
+            v: text("Wg", size=20, font="Liberation Sans", valign=v).bounding_box().min.X
+            for v in ("baseline", "top", "center", "bottom")
+        }
+        assert len({round(w, 6) for w in widths.values()}) == 1

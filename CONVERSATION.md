@@ -687,3 +687,32 @@ Worth being clear about what this is not: it does not render Font Awesome
 icons. Nothing can, when the name in the model matches no family either
 tool can find. It makes us wrong in exactly the way OpenSCAD is wrong,
 which is the only way those models can agree.
+
+---
+
+## Where the text goes
+
+`build123d` has two alignment ideas and only one of them is OpenSCAD's.
+`align` moves the finished bounding box; `text_align` positions text
+within its own layout, which is where the pen and the baseline live. We
+were passing OpenSCAD's halign and valign to `align`, so the *ink* landed
+at the origin: `"H"` began at x=0 where OpenSCAD begins at 2.279, its
+left side bearing, and `"Wg"` sat wholly above the axis where OpenSCAD
+lets the g descend to -5.764.
+
+Reading the manuals rather than guessing settled every case:
+
+* **halign measures the layout box**, pen origin to advance, not the ink.
+  That is why `left` leaves a bearing's worth of gap. `text_align` means
+  the same thing, so the three map straight across.
+* **OCCT's "bottom" is the baseline** of the last line, which is
+  OpenSCAD's baseline -- no adjustment needed for the default.
+* **top, bottom and center are measured on the ink** ("the tallest
+  character", "the lowest-reaching character", "the centre of the
+  bounding box"), so they are a shift off the baseline. OCCT's own TOP
+  and CENTER follow the font's line metrics instead, which is a different
+  answer.
+
+All twelve halign x valign combinations now match OpenSCAD's own render
+to within 0.009 of a millimetre, and the table of its measurements is in
+the tests.
