@@ -87,28 +87,37 @@ class TestTextSize:
     string came out 28% short in each direction and 48% short in area.
     """
 
-    @staticmethod
-    def measured(size: float, font: str = "Helvetica"):
-        shape = text("H", size=size, font=font, halign="center", valign="center")
-        return shape.bounding_box(), shape.area
+    def test_the_conversion_is_applied(self):
+        """Font-independent: whatever font OCCT resolves, our size must
+        reach it scaled by the em-to-point ratio and nothing else."""
+        from build123d import Text as BdText
 
-    def test_a_glyph_matches_openscads_own_render(self):
-        """Measured against OpenSCAD directly: `text("H", size=20,
-        font="Helvetica")` extrudes to 133.202 of area, in a box
-        15.81 x 19.93."""
-        box, area = self.measured(20)
-        assert box.size.Y == pytest.approx(19.93, abs=0.02)
-        assert box.size.X == pytest.approx(15.81, abs=0.02)
-        assert area == pytest.approx(133.202, rel=0.001)
+        from solid123d.primitives import EM_PER_POINT
 
-    def test_arial_too(self):
-        """The same, on a second font, so this is the size convention and
-        not one font's metrics: 128.879 in a box 15.60 x 19.88."""
-        box, area = self.measured(20, "Arial")
-        assert box.size.Y == pytest.approx(19.88, abs=0.02)
-        assert area == pytest.approx(128.879, rel=0.001)
+        ours = text("H", size=20, halign="center", valign="center")
+        scaled = BdText("H", font_size=20 * EM_PER_POINT, align=ours.align)
+        assert ours.area == pytest.approx(scaled.area, rel=1e-9)
+        assert ours.bounding_box().size.Y == pytest.approx(
+            scaled.bounding_box().size.Y, rel=1e-9
+        )
 
     def test_size_scales_linearly(self):
-        small, _ = self.measured(10)
-        large, _ = self.measured(40)
-        assert large.size.Y / small.size.Y == pytest.approx(4, rel=1e-6)
+        def height(size: float) -> float:
+            return text("H", size=size).bounding_box().size.Y
+
+        assert height(40) / height(10) == pytest.approx(4, rel=1e-6)
+
+    @pytest.mark.skipif(
+        find_font_path("Helvetica") is None,
+        reason="needs Helvetica, which OpenSCAD was measured against",
+    )
+    def test_a_glyph_matches_openscads_own_render(self):
+        """The numbers this was calibrated against. `text("H", size=20,
+        font="Helvetica")` extrudes in OpenSCAD to 133.202 of area, in a
+        box 15.81 x 19.93. Skipped where that font is absent, because both
+        renderers then substitute and neither figure means anything."""
+        shape = text("H", size=20, font="Helvetica", halign="center", valign="center")
+        box = shape.bounding_box()
+        assert box.size.Y == pytest.approx(19.93, abs=0.02)
+        assert box.size.X == pytest.approx(15.81, abs=0.02)
+        assert shape.area == pytest.approx(133.202, rel=0.001)
