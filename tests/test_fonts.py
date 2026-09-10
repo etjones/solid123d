@@ -134,14 +134,21 @@ class TestFallbackFont:
     name either and falls back just the same.
     """
 
-    def test_an_unknown_family_uses_openscads_fallback(self):
-        from solid123d.fonts import fallback_font_path
-
-        expected = fallback_font_path()
-        assert expected is not None, "no Liberation Sans to fall back to"
+    def test_two_unknown_families_land_on_the_same_glyph(self):
+        """Whatever the fallback turns out to be, it must not depend on
+        which absent family was asked for."""
         one = text("H", size=20, font="No Such Font 123")
         two = text("H", size=20, font="Definitely Not Installed")
         assert one.area == pytest.approx(two.area, rel=1e-9)
+
+    def test_the_fallback_is_liberation_where_one_exists(self):
+        from solid123d.fonts import FALLBACK_FAMILY, fallback_font_path
+
+        found = fallback_font_path()
+        if found is None:
+            pytest.skip("no Liberation Sans installed and no OpenSCAD bundle")
+        assert "liberation" in found.name.lower()
+        assert FALLBACK_FAMILY == "Liberation Sans"
 
     @pytest.mark.skipif(
         find_font_path("Liberation Sans") is None,
