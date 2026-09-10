@@ -56,14 +56,19 @@ class TestTextFontResolution:
     def test_family_name_uses_real_font_not_arial(self) -> None:
         from build123d import Text as BdText
 
+        from solid123d.primitives import EM_PER_POINT
+
+        # build123d's font_size is OCCT's typographic one; text() takes
+        # OpenSCAD's em in model units, so the reference is scaled to match.
+        em = 10 * EM_PER_POINT
         expected = BdText(
             "Acad",
-            font_size=10,
+            font_size=em,
             font_path=(
                 "/System/Library/Fonts/Supplemental/Academy Engraved LET Fonts.ttf"
             ),
         ).area
-        arial = BdText("Acad", font_size=10, font="Arial").area
+        arial = BdText("Acad", font_size=em, font="Arial").area
         got = text("Acad", size=10, font="Academy Engraved LET").area
         assert got == pytest.approx(expected, rel=1e-6)
         assert got != pytest.approx(arial, rel=0.01)
@@ -71,3 +76,39 @@ class TestTextFontResolution:
     def test_unknown_font_still_renders(self) -> None:
         shape = text("hi", size=10, font="No Such Font Family 123")
         assert shape.area > 0
+
+
+class TestTextSize:
+    """OpenSCAD's size is the em square in model units.
+
+    build123d's font_size goes to OCCT, which measures a font the
+    typographic way: 72 points to the inch against a 100-unit em. Asking
+    for 20 drew a glyph 14.35 tall where OpenSCAD draws 19.93, so every
+    string came out 28% short in each direction and 48% short in area.
+    """
+
+    @staticmethod
+    def measured(size: float, font: str = "Helvetica"):
+        shape = text("H", size=size, font=font, halign="center", valign="center")
+        return shape.bounding_box(), shape.area
+
+    def test_a_glyph_matches_openscads_own_render(self):
+        """Measured against OpenSCAD directly: `text("H", size=20,
+        font="Helvetica")` extrudes to 133.202 of area, in a box
+        15.81 x 19.93."""
+        box, area = self.measured(20)
+        assert box.size.Y == pytest.approx(19.93, abs=0.02)
+        assert box.size.X == pytest.approx(15.81, abs=0.02)
+        assert area == pytest.approx(133.202, rel=0.001)
+
+    def test_arial_too(self):
+        """The same, on a second font, so this is the size convention and
+        not one font's metrics: 128.879 in a box 15.60 x 19.88."""
+        box, area = self.measured(20, "Arial")
+        assert box.size.Y == pytest.approx(19.88, abs=0.02)
+        assert area == pytest.approx(128.879, rel=0.001)
+
+    def test_size_scales_linearly(self):
+        small, _ = self.measured(10)
+        large, _ = self.measured(40)
+        assert large.size.Y / small.size.Y == pytest.approx(4, rel=1e-6)

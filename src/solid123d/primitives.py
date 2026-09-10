@@ -148,6 +148,16 @@ _VALIGN = {
 }
 
 
+# OpenSCAD's text() size is the em square in model units; build123d's
+# font_size goes to OCCT, which measures a font the typographic way, at 72
+# points to the inch against a 100-unit em. Asking for 20 therefore drew a
+# glyph 14.35 tall where OpenSCAD draws 19.93 -- every string in the
+# corpus came out 28% short in each direction, and 48% short in area.
+# Measured against OpenSCAD on Helvetica and on Arial: scaling by this
+# reproduces its glyph to within 0.02% of area.
+EM_PER_POINT = 100 / 72
+
+
 def text(
     text: str,
     size: float = 10,
@@ -174,4 +184,4 @@ def text(
                 kwargs["font_style"] = _FONT_STYLES.get(
                     style.lower(), FontStyle.REGULAR
                 )
-    return _BdText(text, font_size=size, **kwargs)
+    return _BdText(text, font_size=size * EM_PER_POINT, **kwargs)

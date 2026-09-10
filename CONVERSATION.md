@@ -633,3 +633,33 @@ against OpenSCAD's 35,487.
 `extent()` already answers this correctly -- volume for solids, area for
 2D -- and using it makes the whole model convert at 35,527.23 against
 35,486.57.
+
+---
+
+## text() was 28% too small, everywhere
+
+OpenSCAD's `text()` size is the em square in model units. build123d's
+`font_size` goes to OCCT, which measures a font the typographic way: 72
+points to the inch against a 100-unit em. We passed one straight to the
+other, so asking for 20 drew a glyph 14.35 tall where OpenSCAD draws
+19.93 -- **28% short in each direction, 48% short in area** -- for every
+string in the corpus.
+
+Measured against OpenSCAD on two installed fonts, so it is the size
+convention and not one font's metrics:
+
+| font | OpenSCAD | before | after |
+|---|---|---|---|
+| Helvetica | 15.81 x 19.93, area 133.202 | 11.39 x 14.35 | 15.81 x 19.92, area 133.234 |
+| Arial | 15.60 x 19.88, area 128.879 | 11.23 x 14.32 | 15.60 x 19.88, area 128.892 |
+
+Within 0.02% of area on both.
+
+How much this matters, from the corpus: **44.5% of the 3,000 remaining
+mismatches use `text()`, against 5.5% of the 56,327 models that pass.**
+Text-using models are eight times over-represented among the failures.
+That is correlation rather than proof, but it is a strong hint that this
+one conversion has been quietly costing a large share of them.
+
+Found via `cookie_cutter.scad`, which it does *not* fix -- that model's
+remaining error is in a `minkowski()` mesh fallback.
