@@ -663,3 +663,27 @@ one conversion has been quietly costing a large share of them.
 
 Found via `cookie_cutter.scad`, which it does *not* fix -- that model's
 remaining error is in a `minkowski()` mesh fallback.
+
+---
+
+## And the font it falls back to
+
+Chasing `cookie_cutter.scad` further: it asks for `font = "fontawesome"`,
+and **neither tool can resolve that name** -- not even with Font Awesome
+installed, since the family is really "Font Awesome 6 Free". Both fall
+back, to different fonts, silently.
+
+| | fallback | `"ï"` at size 20 |
+|---|---|---|
+| OpenSCAD | Liberation Sans, which it bundles | 46.925, box 7.55 x 19.03 |
+| us, via OCCT | Arial | 49.347, box 7.61 x 20.01 |
+
+5% apart in area and a visibly different glyph. `fallback_font_path()`
+now prefers an installed Liberation Sans and otherwise the copy inside
+OpenSCAD's own application bundle, and the same glyph comes out at 46.932
+against OpenSCAD's 46.925.
+
+Worth being clear about what this is not: it does not render Font Awesome
+icons. Nothing can, when the name in the model matches no family either
+tool can find. It makes us wrong in exactly the way OpenSCAD is wrong,
+which is the only way those models can agree.

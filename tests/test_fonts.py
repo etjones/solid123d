@@ -121,3 +121,48 @@ class TestTextSize:
         assert box.size.Y == pytest.approx(19.93, abs=0.02)
         assert box.size.X == pytest.approx(15.81, abs=0.02)
         assert shape.area == pytest.approx(133.202, rel=0.001)
+
+
+class TestFallbackFont:
+    """A model naming a font nobody has must still agree with OpenSCAD.
+
+    OpenSCAD ships the Liberation family and falls back to Liberation Sans
+    silently, with no warning at all. OCCT falls back to Arial, a
+    different design: the same glyph came out 5% larger in area and
+    visibly different. `fontawesome` is the corpus case -- installing the
+    real Font Awesome does not help, because OpenSCAD does not match that
+    name either and falls back just the same.
+    """
+
+    def test_an_unknown_family_uses_openscads_fallback(self):
+        from solid123d.fonts import fallback_font_path
+
+        expected = fallback_font_path()
+        assert expected is not None, "no Liberation Sans to fall back to"
+        one = text("H", size=20, font="No Such Font 123")
+        two = text("H", size=20, font="Definitely Not Installed")
+        assert one.area == pytest.approx(two.area, rel=1e-9)
+
+    @pytest.mark.skipif(
+        find_font_path("Liberation Sans") is None,
+        reason="needs Liberation Sans, which OpenSCAD was measured against",
+    )
+    def test_it_matches_openscads_own_render(self):
+        """OpenSCAD renders `text("\\u00ef", size=20, font="fontawesome")`
+        to 46.925 of area in a box 7.55 x 19.03, having silently fallen
+        back. Ours must land on the same glyph."""
+        shape = text("ï", size=20, font="fontawesome",
+                     halign="center", valign="center")
+        box = shape.bounding_box()
+        assert shape.area == pytest.approx(46.925, rel=0.001)
+        assert box.size.X == pytest.approx(7.55, abs=0.02)
+        assert box.size.Y == pytest.approx(19.03, abs=0.02)
+
+    def test_a_font_that_is_installed_is_still_used(self):
+        """The fallback must not swallow families that do resolve."""
+        installed = find_font_path("Helvetica")
+        if installed is None:
+            pytest.skip("needs Helvetica")
+        real = text("H", size=20, font="Helvetica")
+        missing = text("H", size=20, font="No Such Font 123")
+        assert real.area != pytest.approx(missing.area, rel=0.01)

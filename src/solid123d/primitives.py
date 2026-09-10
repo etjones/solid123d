@@ -26,7 +26,7 @@ from build123d import Sphere as _BdSphere
 from build123d import Text as _BdText
 
 from ._common import vec3
-from .fonts import find_font_path, parse_font_spec
+from .fonts import fallback_font_path, find_font_path, parse_font_spec
 
 _CENTERED = (Align.CENTER, Align.CENTER, Align.CENTER)
 _CORNER = (Align.MIN, Align.MIN, Align.MIN)
@@ -178,10 +178,18 @@ def text(
         if font_path is not None:
             kwargs["font_path"] = font_path
         else:
-            family, style = parse_font_spec(font)
-            kwargs["font"] = family
-            if style is not None:
-                kwargs["font_style"] = _FONT_STYLES.get(
-                    style.lower(), FontStyle.REGULAR
-                )
+            # Nothing in the font directories matches, which is where
+            # OpenSCAD looks too -- so it would not find this family
+            # either, and draws its own fallback rather than failing.
+            # Following it there is what makes such a model agree.
+            fallback = fallback_font_path()
+            if fallback is not None:
+                kwargs["font_path"] = str(fallback)
+            else:
+                family, style = parse_font_spec(font)
+                kwargs["font"] = family
+                if style is not None:
+                    kwargs["font_style"] = _FONT_STYLES.get(
+                        style.lower(), FontStyle.REGULAR
+                    )
     return _BdText(text, font_size=size * EM_PER_POINT, **kwargs)

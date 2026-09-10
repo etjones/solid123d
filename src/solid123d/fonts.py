@@ -18,6 +18,22 @@ from fontTools.ttLib import TTCollection, TTFont
 _FONT_SUFFIXES = (".ttf", ".otf", ".ttc", ".otc")
 _DEFAULT_STYLES = ("regular", "plain", "normal", "book", "roman", "medium")
 
+# What OpenSCAD draws with when it cannot resolve a family. It ships the
+# Liberation family and falls back to Liberation Sans silently, with no
+# warning at all -- so a model naming a font nobody has still renders,
+# just not in the font its author meant. OCCT falls back to Arial
+# instead, which is a different design: the same glyph came out 5% larger
+# in area and visibly different in shape. Matching OpenSCAD's choice is
+# the only way those models agree.
+FALLBACK_FAMILY = "Liberation Sans"
+
+# Where OpenSCAD keeps that family when the system does not have it.
+_BUNDLED_FALLBACKS = (
+    Path("/Applications/OpenSCAD.app/Contents/Resources/fonts"),
+    Path("/usr/share/openscad/fonts"),
+    Path(r"C:\Program Files\OpenSCAD\fonts"),
+)
+
 
 def _font_dirs() -> list[Path]:
     home = Path.home()
@@ -98,3 +114,22 @@ def find_font_path(spec: str) -> str | None:
         if preferred in styles:
             return str(styles[preferred])
     return str(next(iter(styles.values())))
+
+
+@lru_cache(maxsize=1)
+def fallback_font_path() -> Path | None:
+    """The font to draw with when the requested family cannot be found.
+
+    OpenSCAD's, so that a model naming an absent font still agrees with
+    it. Preferring an installed copy keeps this working without OpenSCAD
+    present; the bundled one is the fallback's fallback.
+    """
+    installed = find_font_path(FALLBACK_FAMILY)
+    if installed is not None:
+        return installed
+    for root in _BUNDLED_FALLBACKS:
+        if not root.is_dir():
+            continue
+        for path in sorted(root.rglob("LiberationSans-Regular.ttf")):
+            return path
+    return None
