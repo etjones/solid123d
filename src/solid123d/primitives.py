@@ -17,6 +17,7 @@ from build123d import (
     Shape,
     Shell,
     Solid,
+    TextAlign,
     Vector,
     Wire,
 )
@@ -26,7 +27,7 @@ from build123d import Sphere as _BdSphere
 from build123d import Text as _BdText
 
 from ._common import vec3
-from .fonts import find_font_path, parse_font_spec
+from .fonts import fallback_font_path, find_font_path, parse_font_spec
 
 _CENTERED = (Align.CENTER, Align.CENTER, Align.CENTER)
 _CORNER = (Align.MIN, Align.MIN, Align.MIN)
@@ -139,13 +140,45 @@ _FONT_STYLES = {
     "bold italic": FontStyle.BOLDITALIC,
 }
 
-_HALIGN = {"left": Align.MIN, "center": Align.CENTER, "right": Align.MAX}
-_VALIGN = {
-    "baseline": Align.MIN,
-    "bottom": Align.MIN,
-    "center": Align.CENTER,
-    "top": Align.MAX,
+# build123d has two alignment ideas and only one of them is OpenSCAD's.
+# ``align`` moves the finished bounding box; ``text_align`` positions the
+# text within its own layout, which is where the pen and the baseline
+# live. Aligning the box put the *ink* at the origin, so "H" began at 0
+# where OpenSCAD begins at 2.279 -- its left side bearing -- and "Wg" sat
+# wholly above the axis where OpenSCAD lets the g descend below it.
+#
+# OpenSCAD's halign measures the layout box, from the pen origin to the
+# advance, not the ink: that is why left leaves a bearing's worth of gap.
+# text_align means the same thing, so the three map straight across, and
+# all three were checked against OpenSCAD to the last printed digit.
+_HALIGN = {
+    "left": TextAlign.LEFT,
+    "center": TextAlign.CENTER,
+    "right": TextAlign.RIGHT,
 }
+
+# OCCT's "bottom" is the baseline of the last line, which is OpenSCAD's
+# baseline, so that one needs no adjustment. The other three are measured
+# on the ink -- the manual says the tallest character, the lowest-reaching
+# character, and the centre of the bounding box -- so they are applied
+# here as a shift off the baseline rather than by asking OCCT, whose own
+# TOP and CENTER follow the font's line metrics instead.
+_INK_OFFSET = {
+    "baseline": lambda lo, hi: 0.0,
+    "top": lambda lo, hi: -hi,
+    "bottom": lambda lo, hi: -lo,
+    "center": lambda lo, hi: -(lo + hi) / 2,
+}
+
+
+# OpenSCAD's text() size is the em square in model units; build123d's
+# font_size goes to OCCT, which measures a font the typographic way, at 72
+# points to the inch against a 100-unit em. Asking for 20 therefore drew a
+# glyph 14.35 tall where OpenSCAD draws 19.93 -- every string in the
+# corpus came out 28% short in each direction, and 48% short in area.
+# Measured against OpenSCAD on Helvetica and on Arial: scaling by this
+# reproduces its glyph to within 0.02% of area.
+EM_PER_POINT = 100 / 72
 
 
 def text(
@@ -161,17 +194,30 @@ def text(
     segments: int | None = None,
 ) -> Shape:
     kwargs: dict[str, object] = {
-        "align": (_HALIGN[halign], _VALIGN[valign]),
+        "align": None,
+        "text_align": (_HALIGN[halign], TextAlign.BOTTOM),
     }
     if font is not None:
         font_path = find_font_path(font)
         if font_path is not None:
             kwargs["font_path"] = font_path
         else:
-            family, style = parse_font_spec(font)
-            kwargs["font"] = family
-            if style is not None:
-                kwargs["font_style"] = _FONT_STYLES.get(
-                    style.lower(), FontStyle.REGULAR
-                )
-    return _BdText(text, font_size=size, **kwargs)
+            # Nothing in the font directories matches, which is where
+            # OpenSCAD looks too -- so it would not find this family
+            # either, and draws its own fallback rather than failing.
+            # Following it there is what makes such a model agree.
+            fallback = fallback_font_path()
+            if fallback is not None:
+                kwargs["font_path"] = str(fallback)
+            else:
+                family, style = parse_font_spec(font)
+                kwargs["font"] = family
+                if style is not None:
+                    kwargs["font_style"] = _FONT_STYLES.get(
+                        style.lower(), FontStyle.REGULAR
+                    )
+    shape = _BdText(text, font_size=size * EM_PER_POINT, **kwargs)
+    if valign == "baseline" or not shape.faces():
+        return shape
+    box = shape.bounding_box()
+    return shape.translate((0, _INK_OFFSET[valign](box.min.Y, box.max.Y), 0))
