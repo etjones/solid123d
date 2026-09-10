@@ -22,12 +22,21 @@ _DEFAULT_STYLES = ("regular", "plain", "normal", "book", "roman", "medium")
 # Liberation family and falls back to Liberation Sans silently, with no
 # warning at all -- so a model naming a font nobody has still renders,
 # just not in the font its author meant. OCCT falls back to Arial
-# instead, which is a different design: the same glyph came out 5% larger
-# in area and visibly different in shape. Matching OpenSCAD's choice is
-# the only way those models agree.
+# instead, a different design: the same glyph came out 5% larger in area
+# and visibly different in shape. Matching OpenSCAD's choice is the only
+# way those models agree.
 FALLBACK_FAMILY = "Liberation Sans"
 
-# Where OpenSCAD keeps that family when the system does not have it.
+# Our own copy, from the same Liberation 2.00.1 OpenSCAD ships. Vendored
+# because the face cannot be assumed present: a stock macOS does not have
+# it, nor do this project's CI runners, and without it the fallback would
+# be whatever the host happens to substitute.
+_VENDORED = Path(__file__).parent / "_fonts" / "LiberationSans-Regular.ttf"
+
+# Where OpenSCAD keeps the family, preferred over our copy when present:
+# the installed OpenSCAD is the one a model will be compared against, and
+# releases differ enough to matter (two Liberation Sans versions on this
+# machine disagreed by 3% on the area of a five-letter word).
 _BUNDLED_FALLBACKS = (
     Path("/Applications/OpenSCAD.app/Contents/Resources/fonts"),
     Path("/usr/share/openscad/fonts"),
@@ -121,15 +130,14 @@ def fallback_font_path() -> Path | None:
     """The font to draw with when the requested family cannot be found.
 
     OpenSCAD's, so that a model naming an absent font still agrees with
-    it. Preferring an installed copy keeps this working without OpenSCAD
-    present; the bundled one is the fallback's fallback.
+    it: its own bundled copy first, then ours, then an installed one.
     """
-    installed = find_font_path(FALLBACK_FAMILY)
-    if installed is not None:
-        return installed
     for root in _BUNDLED_FALLBACKS:
         if not root.is_dir():
             continue
         for path in sorted(root.rglob("LiberationSans-Regular.ttf")):
             return path
-    return None
+    if _VENDORED.is_file():
+        return _VENDORED
+    installed = find_font_path(FALLBACK_FAMILY)
+    return Path(installed) if installed else None

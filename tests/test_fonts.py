@@ -107,20 +107,21 @@ class TestTextSize:
 
         assert height(40) / height(10) == pytest.approx(4, rel=1e-6)
 
-    @pytest.mark.skipif(
-        find_font_path("Helvetica") is None,
-        reason="needs Helvetica, which OpenSCAD was measured against",
-    )
     def test_a_glyph_matches_openscads_own_render(self):
-        """The numbers this was calibrated against. `text("H", size=20,
-        font="Helvetica")` extrudes in OpenSCAD to 133.202 of area, in a
-        box 15.81 x 19.93. Skipped where that font is absent, because both
-        renderers then substitute and neither figure means anything."""
-        shape = text("H", size=20, font="Helvetica", halign="center", valign="center")
+        """Calibrated against OpenSCAD on the vendored face, so this holds
+        on every platform. `text("H", size=20, font="Liberation Sans")`
+        extrudes in OpenSCAD to 121.429 of area in a box 15.52 x 19.11.
+
+        OpenSCAD's own reason for the number: it asks FreeType for the
+        size at 100 dpi while the value is in points, which are 1/72 inch.
+        Its manual calls that a miscalculation kept for compatibility, and
+        notes the accident that `size` then sets capital-letter height.
+        """
+        shape = text("H", size=20, font="No Such Font, So The Vendored One")
         box = shape.bounding_box()
-        assert box.size.Y == pytest.approx(19.93, abs=0.02)
-        assert box.size.X == pytest.approx(15.81, abs=0.02)
-        assert shape.area == pytest.approx(133.202, rel=0.001)
+        assert box.size.Y == pytest.approx(19.11, abs=0.02)
+        assert box.size.X == pytest.approx(15.52, abs=0.02)
+        assert shape.area == pytest.approx(121.429, rel=0.002)
 
 
 class TestFallbackFont:
@@ -141,19 +142,22 @@ class TestFallbackFont:
         two = text("H", size=20, font="Definitely Not Installed")
         assert one.area == pytest.approx(two.area, rel=1e-9)
 
-    def test_the_fallback_is_liberation_where_one_exists(self):
+    def test_the_fallback_is_always_available(self):
+        """Vendored, so this holds on a stock macOS and on CI, not only
+        where someone happened to install Liberation."""
         from solid123d.fonts import FALLBACK_FAMILY, fallback_font_path
 
         found = fallback_font_path()
-        if found is None:
-            pytest.skip("no Liberation Sans installed and no OpenSCAD bundle")
-        assert "liberation" in str(found).lower()
+        assert found is not None
+        assert "liberationsans" in found.name.lower().replace("-", "")
         assert FALLBACK_FAMILY == "Liberation Sans"
 
-    @pytest.mark.skipif(
-        find_font_path("Liberation Sans") is None,
-        reason="needs Liberation Sans, which OpenSCAD was measured against",
-    )
+    def test_the_vendored_copy_is_shipped(self):
+        from solid123d.fonts import _VENDORED
+
+        assert _VENDORED.is_file(), "the vendored font is missing from the package"
+        assert (_VENDORED.parent / "LICENSE").is_file(), "OFL requires the licence"
+
     def test_it_matches_openscads_own_render(self):
         """OpenSCAD renders `text("\\u00ef", size=20, font="fontawesome")`
         to 46.925 of area in a box 7.55 x 19.03, having silently fallen
