@@ -633,3 +633,116 @@ against OpenSCAD's 35,487.
 `extent()` already answers this correctly -- volume for solids, area for
 2D -- and using it makes the whole model convert at 35,527.23 against
 35,486.57.
+
+---
+
+## text() was 28% too small, everywhere
+
+OpenSCAD's `text()` size is the em square in model units. build123d's
+`font_size` goes to OCCT, which measures a font the typographic way: 72
+points to the inch against a 100-unit em. We passed one straight to the
+other, so asking for 20 drew a glyph 14.35 tall where OpenSCAD draws
+19.93 -- **28% short in each direction, 48% short in area** -- for every
+string in the corpus.
+
+Measured against OpenSCAD on two installed fonts, so it is the size
+convention and not one font's metrics:
+
+| font | OpenSCAD | before | after |
+|---|---|---|---|
+| Helvetica | 15.81 x 19.93, area 133.202 | 11.39 x 14.35 | 15.81 x 19.92, area 133.234 |
+| Arial | 15.60 x 19.88, area 128.879 | 11.23 x 14.32 | 15.60 x 19.88, area 128.892 |
+
+Within 0.02% of area on both.
+
+How much this matters, from the corpus: **44.5% of the 3,000 remaining
+mismatches use `text()`, against 5.5% of the 56,327 models that pass.**
+Text-using models are eight times over-represented among the failures.
+That is correlation rather than proof, but it is a strong hint that this
+one conversion has been quietly costing a large share of them.
+
+Found via `cookie_cutter.scad`, which it does *not* fix -- that model's
+remaining error is in a `minkowski()` mesh fallback.
+
+---
+
+## And the font it falls back to
+
+Chasing `cookie_cutter.scad` further: it asks for `font = "fontawesome"`,
+and **neither tool can resolve that name** -- not even with Font Awesome
+installed, since the family is really "Font Awesome 6 Free". Both fall
+back, to different fonts, silently.
+
+| | fallback | `"ï"` at size 20 |
+|---|---|---|
+| OpenSCAD | Liberation Sans, which it bundles | 46.925, box 7.55 x 19.03 |
+| us, via OCCT | Arial | 49.347, box 7.61 x 20.01 |
+
+5% apart in area and a visibly different glyph. `fallback_font_path()`
+now prefers an installed Liberation Sans and otherwise the copy inside
+OpenSCAD's own application bundle, and the same glyph comes out at 46.932
+against OpenSCAD's 46.925.
+
+Worth being clear about what this is not: it does not render Font Awesome
+icons. Nothing can, when the name in the model matches no family either
+tool can find. It makes us wrong in exactly the way OpenSCAD is wrong,
+which is the only way those models can agree.
+
+---
+
+## Where the text goes
+
+`build123d` has two alignment ideas and only one of them is OpenSCAD's.
+`align` moves the finished bounding box; `text_align` positions text
+within its own layout, which is where the pen and the baseline live. We
+were passing OpenSCAD's halign and valign to `align`, so the *ink* landed
+at the origin: `"H"` began at x=0 where OpenSCAD begins at 2.279, its
+left side bearing, and `"Wg"` sat wholly above the axis where OpenSCAD
+lets the g descend to -5.764.
+
+Reading the manuals rather than guessing settled every case:
+
+* **halign measures the layout box**, pen origin to advance, not the ink.
+  That is why `left` leaves a bearing's worth of gap. `text_align` means
+  the same thing, so the three map straight across.
+* **OCCT's "bottom" is the baseline** of the last line, which is
+  OpenSCAD's baseline -- no adjustment needed for the default.
+* **top, bottom and center are measured on the ink** ("the tallest
+  character", "the lowest-reaching character", "the centre of the
+  bounding box"), so they are a shift off the baseline. OCCT's own TOP
+  and CENTER follow the font's line metrics instead, which is a different
+  answer.
+
+All twelve halign x valign combinations now match OpenSCAD's own render
+to within 0.009 of a millimetre, and the table of its measurements is in
+the tests.
+
+---
+
+## Naming what OCCT will not do
+
+`bigme-highbreak-pro.scad` cuts a plate by two slabs and comes back
+inside out: -28,194 where OpenSCAD says 8,462. Both operands match
+OpenSCAD to a third of a percent, both report `is_valid`, and no repair
+touches it -- not the fuzzy ladder from 1e-7 to 1e-3 of the diagonal, not
+folding tool by tool, not pre-fusing the tools, not `SetGlue` in either
+mode, not `ShapeFix`, not `UnifySameDomain`.
+
+OCCT's own `BOPAlgo_ArgumentAnalyzer` says why: **both operands intersect
+themselves**, and carry edges below tolerance. BRepCheck does not test for
+self-intersection, so the shapes call themselves valid right up to the
+point where every boolean on them fails. OCCT's booleans are only defined
+on arguments that do not self-intersect, so the kernel is behaving as
+specified on input it was never promised.
+
+`why_occt_struggled()` now asks it and puts the answer in the warning. It
+does **not** fix the model; it stops a silent wrong answer being reported
+as a plain volume disagreement.
+
+**Gated so nothing healthy pays for it.** The analyzer is a full
+intersection pass, as expensive as the boolean itself, so it runs only
+after an invariant has already failed *and* no repair has helped -- never
+as a precondition. Measured: across 25 models that convert correctly, it
+ran **zero** times. A control on ordinary geometry -- a cube, a cube
+minus a cylinder, a union of two cubes, a cylinder, a sphere -- reports
+nothing, so the finding on this model is real rather than noise.
