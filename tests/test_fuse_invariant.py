@@ -207,3 +207,53 @@ class TestTwoDimensional:
         """A solid has faces too; they must not be mistaken for pieces."""
         box = Box(10, 10, 10)
         assert len(pieces_of(box)) == 1
+
+
+class TestJunkBodies:
+    """OCCT signals an outright failure by including a body whose bounding
+    box spans 1e100 and which holds no volume.
+
+    Such a body is not merely wrong, it is contagious: the funnel in the
+    corpus fused a cone with a thin angled rib, got one of these plus a
+    cone that measured correctly but was internally damaged, and the
+    difference that followed returned 14,014 where the shell is 4,059.
+    """
+
+    @staticmethod
+    def junk():
+        """A stand-in with the signature of one: an absurd extent."""
+        return Solid.make_box(1e60, 1e60, 1e60)
+
+    def test_an_absurd_extent_counts_as_damage(self):
+        from build123d import Compound
+
+        from solid123d._common import damaged
+
+        assert damaged(Compound([Box(10, 10, 10), self.junk()]))
+
+    def test_ordinary_geometry_is_not_damaged(self):
+        from build123d import Compound
+
+        from solid123d._common import damaged
+
+        assert not damaged(Compound([Box(10, 10, 10), Pos(50, 0, 0) * Box(2, 2, 2)]))
+        assert not damaged(Box(10, 10, 10))
+
+    def test_a_union_that_cannot_be_repaired_returns_its_operands(self, monkeypatch):
+        """The operands are still the right material in the right places,
+        only unjoined, and every boolean downstream decomposes its operands
+        anyway. That beats handing back a damaged shape."""
+        import solid123d._common as common
+
+        def always_damaged(bodies, fuzz=None):
+            from build123d import Compound
+
+            return Compound([*bodies, TestJunkBodies.junk()])
+
+        monkeypatch.setattr(common, "_fuse", always_damaged)
+        given = [Box(10, 10, 10), Pos(5, 0, 0) * Box(10, 10, 10)]
+        with pytest.warns(UserWarning, match="returned unjoined"):
+            result = fuse_bodies(given)
+        kept = [s for s in result.solids() if s.bounding_box().diagonal < 1e50]
+        assert len(kept) == 2
+        assert sum(s.volume for s in kept) == pytest.approx(2000)

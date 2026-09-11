@@ -31,6 +31,11 @@ VOLUME_EPS = 1e-9
 # has to be retried. Fractions rather than distances: OCCT asks for a
 # value measured against the geometry in question, and a constant means
 # something different on a 400 mm assembly than on a 4 mm part.
+# A bounding box wider than this is not geometry. OCCT emits such a body
+# when a boolean fails outright -- 1e100 across, holding no volume -- and
+# a shape that keeps one poisons every operation it is passed to.
+ABSURD_EXTENT = 1e50
+
 POINT_TOL = 1e-7
 FUZZ_FRACTIONS = (1e-7, 1e-5)
 
@@ -335,6 +340,26 @@ def _holds_point(piece: Shape) -> Callable[[Vector], bool]:
     return lambda point: piece.is_inside(point, POINT_TOL)
 
 
+def _sane(piece: Shape) -> bool:
+    try:
+        return piece.bounding_box().diagonal <= ABSURD_EXTENT
+    except Exception:  # noqa: BLE001 -- a shape too broken to measure is not sane
+        return False
+
+
+def damaged(result: Shape) -> bool:
+    """Did this boolean come back carrying a body that is not geometry?
+
+    OCCT signals an outright failure by including a body whose bounding
+    box spans 1e100 and which holds no volume. Such a body is not merely
+    wrong, it is contagious: the funnel in the corpus fused a cone with a
+    thin angled rib, got one of these plus a cone that measured correctly
+    but was internally damaged, and the difference that followed returned
+    14,014 where the shell is 4,059.
+    """
+    return any(not _sane(piece) for piece in result.solids() or result.faces())
+
+
 def gained_bodies(bodies: list[Shape], result: Shape) -> bool:
     """Did the union come back in more pieces than it was given?
 
@@ -388,7 +413,7 @@ def bodies_overlap(result: Shape) -> bool:
 
 
 def _fuse_failed(bodies: list[Shape], result: Shape) -> bool:
-    return gained_bodies(bodies, result) or bodies_overlap(result)
+    return damaged(result) or gained_bodies(bodies, result) or bodies_overlap(result)
 
 
 def fuse_bodies(shapes: list[Shape]) -> Shape:
@@ -427,13 +452,20 @@ def fuse_bodies(shapes: list[Shape]) -> Shape:
             continue
         if candidate.wrapped is not None and not _fuse_failed(bodies, candidate):
             return candidate
+    # Nothing merged them correctly. The operands themselves are still the
+    # right material in the right places -- only unjoined -- and every
+    # boolean downstream decomposes its operands anyway, so handing those
+    # back beats handing back a damaged shape. The funnel's difference
+    # returns 4,137 against OpenSCAD's 4,100 this way, and 14,014 the
+    # other.
     warnings.warn(
-        "solid123d: this union came back in more pieces than it was given, "
-        "or in pieces that overlap; neither is something a union can do, so "
-        "the result is probably wrong",
+        "solid123d: this union came back damaged, in more pieces than it was "
+        "given, or in pieces that overlap; none of those is something a union "
+        "can do, so its operands are returned unjoined instead"
+        + why_occt_struggled(bodies),
         stacklevel=4,
     )
-    return at_once
+    return assemble(bodies)
 
 
 def extent(shape: Shape) -> float:
