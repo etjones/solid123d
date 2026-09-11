@@ -461,7 +461,8 @@ def fuse_bodies(shapes: list[Shape]) -> Shape:
     warnings.warn(
         "solid123d: this union came back damaged, in more pieces than it was "
         "given, or in pieces that overlap; none of those is something a union "
-        "can do, so its operands are returned unjoined instead",
+        "can do, so its operands are returned unjoined instead"
+        + why_occt_struggled(bodies),
         stacklevel=4,
     )
     return assemble(bodies)
