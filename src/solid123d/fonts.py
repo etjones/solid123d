@@ -69,15 +69,24 @@ def _faces_in_file(path: Path) -> list[tuple[str, str]]:
     faces: list[tuple[str, str]] = []
     try:
         if path.suffix.lower() in (".ttc", ".otc"):
-            fonts = TTCollection(path, lazy=True).fonts
+            collection = TTCollection(path, lazy=True)
+            fonts, shared = collection.fonts, True
         else:
-            fonts = [TTFont(path, lazy=True)]
+            fonts, shared = [TTFont(path, lazy=True)], False
         for font in fonts:
             family = font["name"].getDebugName(1)
             subfamily = font["name"].getDebugName(2) or ""
             if family:
                 faces.append((family, subfamily))
-            font.close()
+            # Not font.close() inside the loop: the faces of a collection
+            # share one file handle, so closing the first one made every
+            # later read fail silently. Helvetica.ttc holds six weights
+            # and indexed as Regular alone, which is why asking for
+            # "Helvetica:style=Bold" found no file.
+            if not shared:
+                font.close()
+        if shared:
+            collection.close()
     except Exception:  # noqa: BLE001, S110 -- probing arbitrary font files; unreadable ones are simply skipped
         pass
     return faces
@@ -141,3 +150,14 @@ def fallback_font_path() -> Path | None:
         return _VENDORED
     installed = find_font_path(FALLBACK_FAMILY)
     return Path(installed) if installed else None
+
+
+def known_family(family: str) -> bool:
+    """Is this family installed, whatever styles it happens to expose?
+
+    A collection file (.ttc) holding several weights indexes as a single
+    face, so ``find_font_path("Helvetica:style=Bold")`` finds nothing even
+    though Helvetica is right there. Asking about the family alone is what
+    separates "this font is missing" from "this style has no file".
+    """
+    return family.strip().lower() in _font_index()
