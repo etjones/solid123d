@@ -716,3 +716,33 @@ Reading the manuals rather than guessing settled every case:
 All twelve halign x valign combinations now match OpenSCAD's own render
 to within 0.009 of a millimetre, and the table of its measurements is in
 the tests.
+
+---
+
+## Naming what OCCT will not do
+
+`bigme-highbreak-pro.scad` cuts a plate by two slabs and comes back
+inside out: -28,194 where OpenSCAD says 8,462. Both operands match
+OpenSCAD to a third of a percent, both report `is_valid`, and no repair
+touches it -- not the fuzzy ladder from 1e-7 to 1e-3 of the diagonal, not
+folding tool by tool, not pre-fusing the tools, not `SetGlue` in either
+mode, not `ShapeFix`, not `UnifySameDomain`.
+
+OCCT's own `BOPAlgo_ArgumentAnalyzer` says why: **both operands intersect
+themselves**, and carry edges below tolerance. BRepCheck does not test for
+self-intersection, so the shapes call themselves valid right up to the
+point where every boolean on them fails. OCCT's booleans are only defined
+on arguments that do not self-intersect, so the kernel is behaving as
+specified on input it was never promised.
+
+`why_occt_struggled()` now asks it and puts the answer in the warning. It
+does **not** fix the model; it stops a silent wrong answer being reported
+as a plain volume disagreement.
+
+**Gated so nothing healthy pays for it.** The analyzer is a full
+intersection pass, as expensive as the boolean itself, so it runs only
+after an invariant has already failed *and* no repair has helped -- never
+as a precondition. Measured: across 25 models that convert correctly, it
+ran **zero** times. A control on ordinary geometry -- a cube, a cube
+minus a cylinder, a union of two cubes, a cylinder, a sphere -- reports
+nothing, so the finding on this model is real rather than noise.

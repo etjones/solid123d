@@ -18,7 +18,9 @@ In this module, as monkeypatches:
    result falls outside the bounds its inputs imply, and the same
    operation with a fuzzy tolerance gets it right. The retry climbs a
    short ladder of tolerances, each a fraction of the operands' own size;
-   if no rung helps, it warns rather than pretending.
+   if no rung helps, it warns rather than pretending -- and asks
+   ``why_occt_struggled`` whether an operand was something a boolean is
+   defined on at all.
 
 In ``_common``, as ordinary functions called from the operations that need
 them, so these two *are* visible from their call sites:
@@ -241,10 +243,13 @@ def _guarded_bool_op(self: Shape, args, tools, operation) -> Shape:
         if candidate is not None:
             result = candidate
         else:
+            from ._common import why_occt_struggled
+
             warnings.warn(
                 "solid123d: OCCT boolean returned an implausible volume "
                 f"({volume:.6g}, inputs imply {bounds[0]:.6g}..{bounds[1]:.6g}) "
-                "and no fuzzy retry helped; the result is probably wrong",
+                "and no fuzzy retry helped; the result is probably wrong"
+                + why_occt_struggled([*args, *tools]),
                 stacklevel=4,
             )
     return _volume_guarded_clean(result)

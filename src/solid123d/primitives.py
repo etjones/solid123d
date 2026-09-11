@@ -27,7 +27,12 @@ from build123d import Sphere as _BdSphere
 from build123d import Text as _BdText
 
 from ._common import vec3
-from .fonts import fallback_font_path, find_font_path, parse_font_spec
+from .fonts import (
+    fallback_font_path,
+    find_font_path,
+    known_family,
+    parse_font_spec,
+)
 
 _CENTERED = (Align.CENTER, Align.CENTER, Align.CENTER)
 _CORNER = (Align.MIN, Align.MIN, Align.MIN)
@@ -134,6 +139,11 @@ def polygon(
     return outer
 
 
+def _is_collection(path: object) -> bool:
+    """Is this a font collection, holding several faces in one file?"""
+    return str(path).lower().endswith((".ttc", ".otc"))
+
+
 _FONT_STYLES = {
     "bold": FontStyle.BOLD,
     "italic": FontStyle.ITALIC,
@@ -198,19 +208,32 @@ def text(
         "text_align": (_HALIGN[halign], TextAlign.BOTTOM),
     }
     if font is not None:
+        family, style = parse_font_spec(font)
         font_path = find_font_path(font)
-        if font_path is not None:
+        if font_path is not None and not _is_collection(font_path):
             kwargs["font_path"] = font_path
+        elif known_family(family):
+            # Either the family is installed and only this style lacks a
+            # file of its own, or its file is a collection. A path names
+            # a file, not a face, so handing OCCT a .ttc always draws the
+            # first weight in it -- Helvetica.ttc holds six and would
+            # always come back Regular. Asking by family and style gets
+            # the right one: Helvetica Bold is 44% larger in area than
+            # its regular weight, and matches OpenSCAD.
+            kwargs["font"] = family
+            if style is not None:
+                kwargs["font_style"] = _FONT_STYLES.get(
+                    style.lower(), FontStyle.REGULAR
+                )
         else:
-            # Nothing in the font directories matches, which is where
-            # OpenSCAD looks too -- so it would not find this family
-            # either, and draws its own fallback rather than failing.
-            # Following it there is what makes such a model agree.
+            # Nothing in the font directories matches the family, which is
+            # where OpenSCAD looks too -- so it would not find it either,
+            # and draws its own fallback rather than failing. Following it
+            # there is what makes such a model agree.
             fallback = fallback_font_path()
             if fallback is not None:
                 kwargs["font_path"] = str(fallback)
             else:
-                family, style = parse_font_spec(font)
                 kwargs["font"] = family
                 if style is not None:
                     kwargs["font_style"] = _FONT_STYLES.get(

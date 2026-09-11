@@ -549,6 +549,54 @@ def _folded(args: list[Shape], tools: list[Shape]) -> Shape:
     return result[0]
 
 
+def why_occt_struggled(shapes: Iterable[Shape]) -> str:
+    """OCCT's own verdict on shapes a boolean has already failed on.
+
+    ``BOPAlgo_ArgumentAnalyzer`` is the checker OCCT ships for exactly this
+    question, and it finds what ``is_valid`` cannot: a solid that passes
+    BRepCheck can still intersect itself, and OCCT's booleans are only
+    defined on arguments that do not. A plate and its cutter from the
+    corpus are both self-intersecting, both report valid, and every cut of
+    one by the other comes back inside out.
+
+    Deliberately not run before booleans, only after one has failed its
+    invariant and no repair helped. The analyzer is a full intersection
+    pass -- as expensive as the boolean itself -- so making every cut pay
+    for it to explain the few that break would be a poor trade. Returns a
+    phrase for the warning, or "" when it finds nothing to report.
+    """
+    from OCP.BOPAlgo import BOPAlgo_ArgumentAnalyzer
+
+    faults: set[str] = set()
+    for shape in shapes:
+        if shape.wrapped is None:
+            continue
+        analyzer = BOPAlgo_ArgumentAnalyzer()
+        analyzer.SetShape1(shape.wrapped)
+        analyzer.SetShape2(shape.wrapped)
+        analyzer.SelfInterMode = True
+        analyzer.SmallEdgeMode = True
+        try:
+            analyzer.Perform()
+        except Exception:  # noqa: BLE001, S112 -- a diagnostic must never
+            # become the failure it is trying to describe
+            continue
+        for result in analyzer.GetCheckResult():
+            faults.add(str(result.GetCheckStatus()).rsplit(".", 1)[-1])
+    named = []
+    if "BOPAlgo_SelfIntersect" in faults:
+        named.append("it intersects itself")
+    if "BOPAlgo_TooSmallEdge" in faults:
+        named.append("it carries edges below tolerance")
+    if not named:
+        return ""
+    return (
+        " -- and OCCT reports that an operand is not something a boolean is "
+        f"defined on: {' and '.join(named)}, which BRepCheck does not test "
+        "for, so the shape still calls itself valid"
+    )
+
+
 def cut_all(args: list[Shape], tools: list[Shape]) -> Shape:
     """Cut by every tool, checking that the result kept nothing it should
     have removed, and retrying if it did.
@@ -579,7 +627,8 @@ def cut_all(args: list[Shape], tools: list[Shape]) -> Shape:
     warnings.warn(
         "solid123d: this cut kept material inside the shapes it was cutting "
         "with, and neither a fuzzy retry nor cutting one tool at a time "
-        "fixed it; the result is probably wrong",
+        "fixed it; the result is probably wrong"
+        + why_occt_struggled([*args, *tools]),
         stacklevel=4,
     )
     return at_once
