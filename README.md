@@ -1,5 +1,28 @@
 # solid123d
 
+> ### This package has moved into [scad123d](https://github.com/etjones/scad123d)
+>
+> solid123d is now the geometry engine inside scad123d rather than a
+> separate distribution. 0.9.1 was its last release with code in it; this
+> one only carries this notice. It is not going anywhere — it stays
+> installable, and anything pinned to it keeps working — but new work
+> happens in the merged package.
+>
+> ```
+> pip install scad123d
+> ```
+>
+> gives you both `import scad123d` and `import solid123d`, with the same
+> API this package had. **scad123d** converts OpenSCAD models to STEP;
+> **solid123d** is the geometry engine underneath it — OpenSCAD's semantics
+> on build123d — usable on its own if you're writing SolidPython rather than
+> converting `.scad` files.
+>
+> They were split because solid123d has no OpenSCAD dependency and that
+> boundary is worth keeping. It still is, and it still holds — it is
+> enforced by imports now rather than by two repositories, which stopped
+> being worth the release-ordering cost of changing both at once.
+
 [![CI](https://github.com/etjones/solid123d/actions/workflows/ci.yml/badge.svg)](https://github.com/etjones/solid123d/actions/workflows/ci.yml)
 
 A bridge that runs [SolidPython](https://github.com/SolidCode/SolidPython)
